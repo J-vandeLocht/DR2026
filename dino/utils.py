@@ -115,6 +115,20 @@ def make_train_transform_dino(img_size, complex_augs):
                            ])
 
 
+def make_bag_train_transforms_dino(img_size, complex_augs):
+    """Train augs split for frame bags: (per-frame deterministic part, part applied once to the stacked
+    [T, C, H, W] bag), so every frame of a bag gets the same flip/rotation/jitter."""
+    frame = [v2.ToImage(), v2.Resize((img_size, img_size), antialias=True)]
+    bag = []
+    if complex_augs:
+        frame.append(v2.Lambda(apply_clahe_cv2_dino))
+        bag += [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip(), v2.RandomRotation(180),
+                v2.ColorJitter(brightness=0.1, contrast=0.1)]
+    frame.append(v2.ToDtype(torch.float32, scale=True))
+    bag.append(v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
+    return v2.Compose(frame), v2.Compose(bag)
+
+
 def make_val_transform_dino(img_size, complex_augs):
     if complex_augs:
         return v2.Compose([

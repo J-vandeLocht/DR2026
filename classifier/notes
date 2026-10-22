@@ -1,12 +1,6 @@
-filter_frames.py and sample.py are only relevant when we don't want to use the manually selected frames.
+models/ holds the DINO frame-classifier checkpoints (dino/train_dino_classifier.py); utils.py has its train/validate loops
+(train loop supports per-frame CDW, --distance_scale_weight).
 
-Instead, we sample a few frames per video that get a high informativeness score.
-
-Results showed that this method still allows to train a strong classifier, at least for the binary case, since
-relevant biomarkers seem to be frequent enough to justify the automatic grading of frames based on the video grade.
-However, for the multi-class case this assumption probably does not hold since only a few frames might carry the
-relevant information.
-Apart from that, we do have manually selected frames for all videos, so just using these frames is superior.
-
-Basically, all the files regarding this automatic selection could be deleted, since the method is not used.
-The stuff still remains for now.
+sample_frames.py / filter_frames.py: automatic frame selection (1-4 high-informativeness, well-spaced frames per video,
+then confidence filtering) as an alternative to the hand-picked frames. Works for binary, but for 5-class only a few
+frames carry the lesion info, so the hand-picked frames (data/2024_Paxos_Frames) are used instead. Unused, could be deleted.

@@ -45,7 +45,8 @@ class BagTransformer(nn.Module):
     """Transformer aggregator over a bag of per-frame vectors, shared by
     DinoSelfAttention and ConvNextSelfAttention. Subclasses build
     self.backbone, call _build_head(), and implement extract_features
-    ([num_frames, 3, H, W] -> [num_frames, dim]).
+    ([num_frames, 3, H, W] -> [num_frames, dim], or [num_frames, K, dim] for
+    K region tokens per frame, which all attend to each other).
 
     aggregation_mode controls how the classifier head reads the
     post-attention sequence:
@@ -54,10 +55,11 @@ class BagTransformer(nn.Module):
     - "multi_token": num_query_tokens learnable tokens, concatenated.
     frame_weights (used for attention viz and the entropy/distance-scale
     loss terms) is the query token(s)' attention to the frames, averaged
-    over query tokens."""
+    over query tokens and summed over each frame's region tokens."""
 
     def _build_head(self, dim, num_heads, ffn_dim, dropout, num_blocks, num_frames, num_classes,
-                    aggregation_mode, num_query_tokens, use_pos_embedding=False, final_norm=False):
+                    aggregation_mode, num_query_tokens, use_pos_embedding=False, final_norm=False,
+                    tokens_per_frame=1):
         if aggregation_mode not in AGGREGATION_MODES:
             raise ValueError(f"Unknown aggregation_mode: {aggregation_mode}")
 
@@ -74,6 +76,8 @@ class BagTransformer(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, self.num_query_tokens, dim))
         # Optional learned per-frame-slot embedding (not applied to the query token(s)).
         self.pos_embedding = nn.Parameter(torch.zeros(1, num_frames, dim)) if use_pos_embedding else None
+        # Learned per-region embedding, shared across frames, when frames give K > 1 tokens.
+        self.region_embedding = nn.Parameter(torch.zeros(1, 1, tokens_per_frame, dim)) if tokens_per_frame > 1 else None
 
         self.blocks = nn.ModuleList([
             TransformerBlock(dim, num_heads=num_heads, ffn_dim=ffn_dim, dropout=dropout)
@@ -96,11 +100,19 @@ class BagTransformer(nn.Module):
         nn.init.normal_(self.cls_token, std=1e-6)
         if self.pos_embedding is not None:
             nn.init.trunc_normal_(self.pos_embedding, std=0.02)
+        if self.region_embedding is not None:
+            nn.init.trunc_normal_(self.region_embedding, std=0.02)
 
     def _load_full_checkpoint(self, path):
         """Strict: the model must have the same architecture config as when the checkpoint was saved."""
         print(f"Loading full {type(self).__name__} checkpoint: {path}")
         state_dict = torch.load(path, map_location="cpu")
+        # Feature standardization buffers of older ConvNeXt runs (removed 2026-10-20).
+        # Identity buffers (runs without standardization) drop silently; fitted ones change the outputs.
+        feat_mean, feat_std = state_dict.pop("feat_mean", None), state_dict.pop("feat_std", None)
+        if feat_mean is not None and (feat_mean.any() or (feat_std != 1).any()):
+            print(f"WARNING: {path} was trained on standardized backbone features, which are no longer "
+                  f"applied, so its outputs will differ.")
         self.load_state_dict(state_dict, strict=True)
         print(f"Full model weights loaded strictly ({len(state_dict)} tensors).")
 
@@ -144,17 +156,21 @@ class BagTransformer(nn.Module):
         return cls(full_checkpoint_path=ckpt, **config)
 
     def forward_head(self, h):
-        # h: [num_frames, L] -> pseudo-batch [1, num_frames, L]
+        # h: [num_frames, L] or [num_frames, K, L] -> pseudo-batch [1, num_frames(*K), L]
         h = h.unsqueeze(0)
+        T = h.size(1)
 
         if self.pos_embedding is not None:
-            n = h.size(1)
-            if n != self.num_frames:
+            if T != self.num_frames:
                 raise ValueError(
-                    f"Got {n} frames but positional embedding was initialized "
+                    f"Got {T} frames but positional embedding was initialized "
                     f"for num_frames={self.num_frames}."
                 )
-            h = h + self.pos_embedding
+            h = h + (self.pos_embedding.unsqueeze(2) if h.dim() == 4 else self.pos_embedding)
+        if h.dim() == 4:
+            if self.region_embedding is not None:
+                h = h + self.region_embedding
+            h = h.flatten(1, 2)  # [1, num_frames*K, L], frame-major
 
         N = self.num_query_tokens
         query_tokens = self.cls_token.expand(h.size(0), -1, -1)  # [1, N, L]
@@ -180,12 +196,13 @@ class BagTransformer(nn.Module):
 
         logits = self.classifier(bag_representation)  # [1, num_classes]
 
-        # Query token(s)' attention to the frames, averaged over query
-        # tokens, normalized to sum to 1 over the frames.
-        frame_weights = attn_weights[0, :N, N:].mean(dim=0)  # [num_frames]
-        frame_weights = frame_weights / (frame_weights.sum() + 1e-12)
+        # Query token(s)' attention to the frame (region) tokens, averaged
+        # over query tokens, normalized to sum to 1, then summed per frame.
+        token_weights = attn_weights[0, :N, N:].mean(dim=0)  # [num_frames*K]
+        region_weights = (token_weights / (token_weights.sum() + 1e-12)).view(T, -1)  # [num_frames, K]
+        frame_weights = region_weights.sum(dim=1)  # [num_frames]
 
-        return logits, frame_weights, frame_weights
+        return logits, frame_weights, region_weights
 
     def forward(self, x):
         """x: [num_frames, 3, H, W] -> (logits, frame_weights)"""

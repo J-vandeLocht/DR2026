@@ -56,6 +56,7 @@ def train_classifier(args):
             model.head = make_mlp_head(model.embed_dim, num_classes)
     else:
         model = DinoClassifier(freeze_backbone=args.freeze_backbone, num_classes=num_classes)
+    model.backbone.grad_checkpointing = args.grad_checkpointing
     model = model.to(device)
 
     train_trans = make_train_transform_dino(args.img_size, args.complex_augs)
@@ -68,14 +69,17 @@ def train_classifier(args):
 
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     optimizer = make_optimizer(model, args.lr)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=0.1)
+    if args.lr_schedule == 'cosine':
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.min_lr)
+    else:
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=0.1)
 
     logger = EpochLogger(run_name, run_dir, args, args.binary_classification, "best_model.pth",
                          cm_to_tensorboard=True)
     print(f"Start Training: {run_name}")
     for epoch in range(args.epochs):
         t_loss = train_one_epoch_classifier(model, train_loader, criterion, optimizer, args.binary_classification,
-                                            device)
+                                            device, args.distance_scale_weight)
         m = validate_classifier(model, val_loader, criterion, args.binary_classification, device)
         scheduler.step()
         logger.log_epoch(epoch, model, optimizer, t_loss, m)
@@ -96,11 +100,20 @@ if __name__ == "__main__":
     parser.add_argument('--binary_classification', action='store_true')
 
     parser.add_argument('--epochs', type=int, default=15)
-    parser.add_argument('--lr_step', type=int, default=10)
+    parser.add_argument('--lr_step', type=int, default=10,
+                        help='StepLR step size in epochs (only for --lr_schedule step).')
+    parser.add_argument('--lr_schedule', type=str, default='step', choices=['step', 'cosine'],
+                        help="'step' = StepLR(--lr_step, gamma 0.1), 'cosine' = cosine annealing to --min_lr over --epochs.")
+    parser.add_argument('--min_lr', type=float, default=1e-7,
+                        help='Final LR of the cosine schedule (only for --lr_schedule cosine).')
+    parser.add_argument('--distance_scale_weight', type=float, default=0.0,
+                        help='Distance-Scaled CE weight: loss *= 1 + w*|pred_grade-true_grade| (5-class only). 0 disables.')
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--complex_augs', action='store_true')
+    parser.add_argument('--grad_checkpointing', action='store_true',
+                        help='Per-block gradient checkpointing in the backbone (unfrozen bs 16 at 512px: ~7GB instead of OOM on 24GB).')
     parser.add_argument('--run_tag', type=str, default=None,
                         help='Optional short suffix appended to the run name (e.g. an experiment label).')
 

@@ -1,11 +1,3 @@
-models now contains the 5 runs for the 5 splits of DINOv3, with the complex augmentations, frozen backbone and trained
-with the cls token (all based on their classifier in 'classifier/models')
-
-utils.py:
-MIL specific utils
-
-vis_attenion.py:
-(a bit messy at the moment)
-visualizes the attention weights for both the whole video and the 32 sampled frames. Saves results into mil_viz
-
-EfficientNet scripts are gone and can be found only in the git repo
+Only notes left here. MIL training is dino/train_dino_mil.py (binary gated-attention MIL, optional classifier init),
+its loops are in transformer/utils.py, eval in dino/vis_video_results.py. Old MIL checkpoints/vis scripts are gone
+(see git history). EfficientNet scripts only in git history.

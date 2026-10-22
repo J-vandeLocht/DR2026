@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tqdm import tqdm
 from misc.utils import binary_metrics, multiclass_metrics
 
@@ -8,7 +9,10 @@ from sklearn.metrics import (accuracy_score, f1_score, roc_auc_score,
                              precision_score, recall_score, average_precision_score)
 
 
-def train_one_epoch_classifier(model, loader, criterion, optimizer, binary_classification, device):
+def train_one_epoch_classifier(model, loader, criterion, optimizer, binary_classification, device,
+                               distance_scale_weight=0.0):
+    """distance_scale_weight > 0 scales each frame's CE by 1 + w*|argmax - grade| (5-class only, as in
+    transformer/utils.py::train_one_epoch_trans)."""
     model.train()
     total_loss = 0
 
@@ -21,7 +25,12 @@ def train_one_epoch_classifier(model, loader, criterion, optimizer, binary_class
 
         optimizer.zero_grad()
         outputs = model(images)
-        loss = criterion(outputs, targets)
+        if distance_scale_weight > 0 and not binary_classification:
+            with torch.no_grad():
+                scale = 1.0 + distance_scale_weight * (outputs.argmax(dim=-1) - targets).abs().float()
+            loss = (F.cross_entropy(outputs, targets, reduction="none") * scale).mean()
+        else:
+            loss = criterion(outputs, targets)
         loss.backward()
         optimizer.step()
 

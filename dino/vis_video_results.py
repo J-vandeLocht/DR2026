@@ -11,6 +11,7 @@ from data.dataset import MILVideoDataset
 from dino.utils import make_val_transform_dino
 from dino.train_dino_transformer import DinoSelfAttention
 from dino.train_dino_classifier import DinoClassifier
+from convnext.model import ConvNextSelfAttention
 
 
 # ----------------------------------------------------------------------------
@@ -117,6 +118,12 @@ def build_transformer(path, num_classes, device):
     return model.to(device)
 
 
+def build_convnext_transformer(path, num_classes, device):
+    model = ConvNextSelfAttention.from_checkpoint(path)
+    _check_num_classes(model, num_classes, path)
+    return model.to(device)
+
+
 def infer_transformer(model, loader, device, num_classes, vid_names):
     model.eval()
     results = {}
@@ -197,6 +204,7 @@ def infer_classifier_video(model, loader, device, num_classes, vid_names):
 
 MODEL_REGISTRY = {
     "transformer":      {"data": "video", "build": build_transformer, "infer": infer_transformer},
+    "convnext_transformer": {"data": "video", "build": build_convnext_transformer, "infer": infer_transformer},
     "classifier":       {"data": "frame", "build": build_classifier,  "infer": infer_classifier_frames},
     "classifier_video": {"data": "video", "build": build_classifier,  "infer": infer_classifier_video},
 }
@@ -296,10 +304,12 @@ def main(args):
             df, pred_cols = format_model_columns(results, m["name"], run_name, num_classes)
             pred_columns.extend(pred_cols)
 
+            # label/grade from every model: a frame-based model may miss videos without matched frames
             if base_df is None:
                 base_df = df[["label", "grade"] + pred_cols]
             else:
                 base_df = base_df.join(df[pred_cols], how="outer")
+                base_df[["label", "grade"]] = base_df[["label", "grade"]].combine_first(df[["label", "grade"]])
 
         base_df.index.name = 'video'
         base_df = base_df[["label", "grade"] + pred_columns]

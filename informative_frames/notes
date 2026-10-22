@@ -1,13 +1,9 @@
-sample_frames.py: Takes videos from data/dr_videos and samples 7 frames to data/informative_frames/frames_raw_extract
+sample_frames.py: sample 7 frames per video from data/dr_videos -> data/informative_frames/frames_raw_extract
+grade_frames.py: UI to label those frames informative / not
+crop_frames.py: crop them with the cropping ensemble, sort into 0/1 folders
+classify_frames.py: 5-fold EfficientNet informative classifier on frames_cropped -> models/, folds in split_info_5fold_*.csv
+extract_inf_frames.py: crop + filter all videos with both ensembles -> cleaned_videos + per-frame txts/plots
 
-grade_frames.py: Take frames from data/frames_raw_extract and grade into 2 classes using an interface.
-
-crop_frames.py: Use the 5 trained cropping models to crop the extracted frames and move them to 0 and 1 folders
-
-classify_frames.py: Use images in data/informative_frames/frames_cropped to train 5 EfficientNets for classifying frames
-into informative and not with 5 splits. Models are saved in models. split_info_5fold_{timestamp}.csv saves the
-mapping
-
-extract_inf_frames.py: Use trained cropping model ensemble and trained informative frames model ensemble to both crop
-and filter all videos in a video folder;
-results are saved in cleaned_videos and contains the clips and txts/plots that visualize the confidences for each frame
+2026-10-14: data/ensemble_results_paxos2025/{cleaned_videos,plots,txt_files} replaced by an updated extraction
+(https://uni-bonn.sciebo.de/s/jRc2RjGae7mjZwi). Same 417 videos/txt format; median informative frames 675 (was 406),
+min 32 per clip (no padding). Renamed to CLEAN_* on import; old clips/frame_clusters/frame_maps deleted, frame_clusters rebuilt.

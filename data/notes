@@ -1,16 +1,18 @@
-dataset.py: Contains the dataset classes used in the whole project
+dataset.py: dataset classes for the whole project (FrameDataset, MILVideoDataset(Cluster), KaggleDRDataset)
 
-match_clips.py: Matches frames in FRAME_DIRS with video (clips) in CLIP_DIRS; saved into matching_results_{}.json.
-We need this later to create a consistent dataset split for both the frame-based and video-based models
+match_clips.py: match frames (FRAME_DIRS) to clips (CLIP_DIRS) -> matching_results_{year}.json
+match_grades.py: matching results + DR_Grading_Summary_v3.csv -> clip_labels_{year}.json, image_labels_{year}.json
+match_grades_2020.py: Paxos2020 grades straight from annotations.csv (no still frames -> empty image lists)
+find_frames.py: CPU-only frame matching, shardable (--num_shards/--shard_index, --skip_first)
+split_data.py: stratified (5 grades) video-wise 80/20 splits, frame split follows the videos (~80/20)
+  stratified_splits/ = fused 2025+2020, stratified_splits_paxos2025/ = 2025 (+ mil_*_2025.json, mil_train_mixed.json);
+  the 2025 val videos and frame jsons are identical in both.
+mix_paxos2020.ipynb: hand-pick grade-balanced Paxos2020 videos into a split's train set -> mil_train_mixed.json
+  (+ mil_train_mixed_decisions.json for resuming); train with --fused_dataset.
+multi_eval_paxos2025_*: vis_video_results.py prediction CSVs + analyse_runs.py results (all = old, baselines = 5-split
+  comparison 2026-10-21, clfcos = same with the cosine+CDW classifiers 2026-10-22).
 
-match_grades.py: Use matching_results_{}.json and the official grading in DR_Grading_Summary_v3.csv to extract the grading;
-saved into clip_labels_{}.json and image_labels_{}.json
-
-split_data.py: Create stratified split (original 5 grades) video-based with clip_labels_{}.json and get the frame-based split
-using matching_results_{}.json. The split is 0.8 to 0.2 video-wise and only approximately 0.8 to 0.2 frame-wise.
-
-------------------------------------------------------------------------------------------------------------------------------
-
-Removed IMG_2581.mp4 from sciebo because 'IMG_2581 LE MILD NPDR.mp4' is the non-downscaled version (duplicate)
-Removed duplicate of 'IMG_2502 RE NO DR CHANGES.mp4' (there was the same video again but with an additional space in the name)
-R0742 is higher quality version of R072R and R069R is identical to R0742 (deleted R072R and R0742)
+--------------------------------------------------------------------------------
+Removed IMG_2581.mp4 (duplicate of the non-downscaled 'IMG_2581 LE MILD NPDR.mp4')
+Removed duplicate of 'IMG_2502 RE NO DR CHANGES.mp4' (same video, extra space in name)
+R0742 is the higher-quality R072R, R069R is identical to R0742 (deleted R072R and R0742)

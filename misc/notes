@@ -1,1 +1,2 @@
-some utils
+utils.py: metrics (binary_metrics, multiclass_metrics incl. QWK + referable recall), confusion matrix plots, attention vis.
+training.py: shared training boilerplate (seeding, run dirs, balanced loaders, optimizer groups, EpochLogger -> results/run_results.csv).

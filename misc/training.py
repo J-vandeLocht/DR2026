@@ -1,6 +1,9 @@
 """Boilerplate shared by the training scripts (dino/train_dino_*.py, convnext/train_convnext_transformer.py)."""
+import csv
+import fcntl
 import os
 import random
+import sys
 from datetime import datetime
 
 import numpy as np
@@ -71,21 +74,66 @@ def make_optimizer(model, lr, backbone_lr_mult=None, optimizer="adam", weight_de
     return optim.Adam(param_groups, lr=lr)
 
 
+SELECTION_METRICS = ("default", "combined")
+
+# One row per finished run (any script using EpochLogger): dataset/split, every CLI arg, best + last epoch metrics.
+RESULTS_CSV = "results/run_results.csv"
+
+
+def append_run_result(row, path=RESULTS_CSV):
+    """Append row to the shared results CSV. Columns are the union over all rows (new args/metrics add
+    columns, older rows get blanks); the file is locked so runs finishing at the same time don't collide."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path + ".lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        rows, fieldnames = [], []
+        if os.path.exists(path):
+            with open(path, newline="") as f:
+                reader = csv.DictReader(f)
+                fieldnames = list(reader.fieldnames or [])
+                rows = list(reader)
+        fieldnames += [k for k in row if k not in fieldnames]
+        tmp = path + ".tmp"
+        with open(tmp, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows + [row])
+        os.replace(tmp, path)
+
+
+def selection_score(m, binary_classification, selection="default"):
+    """Checkpoint-selection score from a validate_* metrics dict. "default": PR-AUC (binary) / QWK (5-class);
+    "combined" (5-class only): mean of QWK, referable recall and accuracy."""
+    if selection == "combined":
+        if binary_classification:
+            raise ValueError("selection 'combined' is only defined for 5-class (QWK + referable recall + acc)")
+        return (m['qwk'] + m['referable_recall'] + m['acc']) / 3
+    return m['pr_auc'] if binary_classification else m['qwk']
+
+
 class EpochLogger:
     """Per-epoch TensorBoard logging, confusion matrix, console line and best-checkpoint
-    saving (selection metric: QWK for 5-class, PR-AUC for binary)."""
+    saving (selection metric: see selection_score)."""
 
-    def __init__(self, run_name, run_dir, args, binary_classification, checkpoint_name, cm_to_tensorboard=False):
+    def __init__(self, run_name, run_dir, args, binary_classification, checkpoint_name, cm_to_tensorboard=False,
+                 selection="default"):
         self.run_dir = run_dir
         self.binary = binary_classification
         self.checkpoint_path = os.path.join(run_dir, checkpoint_name)
         self.cm_to_tensorboard = cm_to_tensorboard
+        self.selection = selection
         self.class_names = ['non-referable', 'referable'] if binary_classification else ['0', '1', '2', '3', '4']
         self.writer = SummaryWriter(log_dir=os.path.join("runs", run_name))
         self.writer.add_text("args", str(args))
         # -inf (not 0.0) so a checkpoint is always written, even if the metric stays <= 0.
         self.best_selection_metric = float("-inf")
         self.best_metrics = None
+        self.best_epoch = None
+        self.last_metrics = None
+        self.last_train_loss = None
+        self.epochs_run = 0
+        self.run_name = run_name
+        self.args = args
 
     def log_epoch(self, epoch, model, optimizer, train_loss, m, extra_scalars=None):
         """m: metrics dict from a validate_* loop (incl. 'loss', 'y_true', 'y_pred')."""
@@ -94,10 +142,15 @@ class EpochLogger:
         if self.cm_to_tensorboard:
             w.add_image('ConfusionMatrix', np.array(Image.open(cm_path).convert('RGB')).transpose(2, 0, 1), epoch)
 
-        selection_metric = m['pr_auc'] if self.binary else m['qwk']
+        selection_metric = selection_score(m, self.binary, self.selection)
+        self.last_metrics = {k: v for k, v in m.items() if k not in ('y_true', 'y_pred')}
+        self.last_train_loss = train_loss
+        self.epochs_run = epoch + 1
+        w.add_scalar('Meta/Selection_Metric', selection_metric, epoch)
         if selection_metric > self.best_selection_metric:
             self.best_selection_metric = selection_metric
             self.best_metrics = {k: v for k, v in m.items() if k not in ('y_true', 'y_pred')}
+            self.best_epoch = epoch
             torch.save(model.state_dict(), self.checkpoint_path)
             w.add_scalar('Meta/Best_Selection_Metric', selection_metric, epoch)
 
@@ -125,6 +178,38 @@ class EpochLogger:
             f"{headline_name}: {headline_value:.3f}"
         )
 
+    def results_row(self):
+        """Shared-CSV row: run identity, dataset/split, all args (hp_*), best/last aggregate metrics (no per-class)."""
+        args = vars(self.args)
+        main_spec = getattr(sys.modules["__main__"], "__spec__", None)
+        row = {
+            "finished": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "run_name": self.run_name,
+            "script": main_spec.name if main_spec else os.path.basename(sys.argv[0]),
+            "run_dir": self.run_dir,
+            "dataset": "paxos2025+paxos2020" if args.get("fused_dataset") else "paxos2025",
+            "split": os.path.basename(os.path.normpath(args.get("split_path", ""))),
+            "split_path": args.get("split_path"),
+            "train_json": args.get("train_json"),
+            "val_json": args.get("val_json"),
+            "task": "binary" if self.binary else "5-class",
+            "selection": self.selection,
+            "epochs_run": self.epochs_run,
+            "best_epoch": self.best_epoch,
+            "best_selection_metric": round(self.best_selection_metric, 4),
+        }
+        row.update({f"hp_{k}": v for k, v in args.items() if k not in ("split_path", "train_json", "val_json")})
+        for prefix, metrics in (("best", self.best_metrics), ("last", self.last_metrics)):
+            for k, v in (metrics or {}).items():
+                if "_class" not in k:
+                    row[f"{prefix}_{k}"] = round(float(v), 4)
+        if self.last_train_loss is not None:
+            row["last_train_loss"] = round(float(self.last_train_loss), 4)
+        return row
+
     def close(self):
         self.writer.close()
+        if self.epochs_run:
+            append_run_result(self.results_row())
+            print(f"Appended results to {RESULTS_CSV}")
         print(f"Done. Run directory: {self.run_dir}")

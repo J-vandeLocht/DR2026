@@ -1,13 +1,4 @@
-sample_frames.py:
-samples one frame of each of the videos (at 50% of the video length), pads them with black pixels to make them square
-and saves them to frames_to_annotate_larger (will be annotated using a grading csv)
-
-annotation_app_video.py:
-takes the frames in frames_to_annotate_larger and starts an annotation script that allows to create annotations_video_frames_larger.csv
-
-segmentation_pipeline.py:
-takes both the sampled frames and the annotations to train five Unet++ (B4 backbone) models (saved in models) on
-five different splits (saved in cv_splits.json)
-
-segment_frames.py:
-takes a folder of sampled frames, crops them and saves the results to another folder.
+sample_frames.py: one frame per video (50% of length), padded to square -> frames_to_annotate_larger
+annotation_app_video.py: annotate those frames -> annotations_video_frames_larger.csv (Paxos2025 + Paxos2020, 758 frames)
+segmentation_pipeline.py: 5-fold Unet++ (B4) ensemble -> models/, folds in splits.json
+segment_frames.py: crop a folder of frames with the ensemble

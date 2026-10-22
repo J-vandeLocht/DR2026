@@ -25,3 +25,5 @@ CLAUDE.md
 __pycache__/
 *.log
 dino/logs/
+results/*.lock
+results/*.tmp

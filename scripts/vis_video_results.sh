@@ -71,14 +71,67 @@ TRANSFORMER_PATHS_ALL_2L=(
 #  --complex_augs \
 #  --binary_classification
 
+#python -u -m dino.vis_video_results \
+#  --dataset_name "2025" \
+#  --annotations_path "data/stratified_splits" \
+#  --videos_path "data/ensemble_results_paxos2025/cleaned_videos" \
+#  --output_dir "data/multi_eval_paxos2025_all_2" \
+#  --model Clf classifier "${CLASSIFIER_PATHS_ALL[@]}" \
+#  --model Clf32  classifier_video "${CLASSIFIER_PATHS_ALL[@]}" \
+#  --model Trans_1L transformer "${TRANSFORMER_PATHS_ALL[@]}" \
+#  --model Trans_2L transformer "${TRANSFORMER_PATHS_ALL_2L[@]}" \
+#  --img_size 512 \
+#  --complex_augs
+
+# 5-split baselines (2026-10-21, new clips, data/stratified_splits_paxos2025): classifier ensembles vs. DINO baseline v2
+# vs. ConvNeXt baseline. Classifier for split i = the checkpoint that initialized the DINO transformer of split i.
+# Analysis: cd data/multi_eval_paxos2025_all && python analyse_runs.py --input_dir ../multi_eval_paxos2025_baselines \
+#   --output_dir ../multi_eval_paxos2025_baselines/split_analysis_results
+CLASSIFIER_PATHS_V2=(
+"classifier/models/dino_all_split_1_1002_1543_full/best_model.pth"
+"classifier/models/dino_all_split_2_1002_1543_full/best_model.pth"
+"classifier/models/dino_all_split_3_1002_1543_full/best_model.pth"
+"classifier/models/dino_all_split_4_1005_0857_full/best_model.pth"
+"classifier/models/dino_all_split_5_1005_0855_full/best_model.pth"
+)
+
+DINO_BV2_PATHS=(
+"transformer/models/2026-10-20_13-32_dino_sa_all_split_1_full_sel-combined_bv2_randseg_ctrl/best_sa_model.pth"
+"transformer/models/2026-10-20_18-01_dino_sa_all_split_2_full_sel-combined_baseline_v2/best_sa_model.pth"
+"transformer/models/2026-10-20_18-03_dino_sa_all_split_3_full_sel-combined_baseline_v2/best_sa_model.pth"
+"transformer/models/2026-10-21_08-40_dino_sa_all_split_4_full_sel-combined_baseline_v2/best_sa_model.pth"
+"transformer/models/2026-10-21_11-36_dino_sa_all_split_5_full_sel-combined_baseline_v2/best_sa_model.pth"
+)
+
+# Classifiers retrained 2026-10-22 with --lr_schedule cosine --distance_scale_weight 0.2 (bs 2, otherwise as V2).
+CLASSIFIER_PATHS_COS=(
+"classifier/models/2026-10-22_11-23_dino_all_split_1_full_cos_cdw02_bs2/best_model.pth"
+"classifier/models/2026-10-22_11-23_dino_all_split_2_full_cos_cdw02_bs2/best_model.pth"
+"classifier/models/2026-10-22_11-23_dino_all_split_3_full_cos_cdw02_bs2/best_model.pth"
+"classifier/models/2026-10-22_11-23_dino_all_split_4_full_cos_cdw02_bs2/best_model.pth"
+"classifier/models/2026-10-22_11-23_dino_all_split_5_full_cos_cdw02_bs2/best_model.pth"
+)
+CNX_BASELINE_PATHS=(
+"convnext/models/2026-10-20_21-50_convnext_sa_all_split_1_linear_attnpool_s3_sel-combined_cnx_baseline/best_sa_model.pth"
+"convnext/models/2026-10-20_21-54_convnext_sa_all_split_2_linear_attnpool_s3_sel-combined_cnx_baseline/best_sa_model.pth"
+"convnext/models/2026-10-21_00-49_convnext_sa_all_split_3_linear_attnpool_s3_sel-combined_cnx_baseline/best_sa_model.pth"
+"convnext/models/2026-10-21_03-09_convnext_sa_all_split_4_linear_attnpool_s3_sel-combined_cnx_baseline/best_sa_model.pth"
+"convnext/models/2026-10-21_08-33_convnext_sa_all_split_5_linear_attnpool_s3_sel-combined_cnx_baseline/best_sa_model.pth"
+)
+
+SPLITS=(${SPLITS:-1 2 3 4 5})
 python -u -m dino.vis_video_results \
   --dataset_name "2025" \
-  --annotations_path "data/stratified_splits" \
+  --splits "${SPLITS[@]}" \
+  --annotations_path "data/stratified_splits_paxos2025" \
+  --frame_annotations_path "data/stratified_splits_paxos2025" \
   --videos_path "data/ensemble_results_paxos2025/cleaned_videos" \
-  --output_dir "data/multi_eval_paxos2025_all_2" \
-  --model Clf classifier "${CLASSIFIER_PATHS_ALL[@]}" \
-  --model Clf32  classifier_video "${CLASSIFIER_PATHS_ALL[@]}" \
-  --model Trans_1L transformer "${TRANSFORMER_PATHS_ALL[@]}" \
-  --model Trans_2L transformer "${TRANSFORMER_PATHS_ALL_2L[@]}" \
+  --output_dir "${OUT_DIR:-data/multi_eval_paxos2025_baselines}" \
+  --model Clf classifier $(for s in "${SPLITS[@]}"; do echo "${CLASSIFIER_PATHS_V2[$((s-1))]}"; done) \
+  --model Clf32 classifier_video $(for s in "${SPLITS[@]}"; do echo "${CLASSIFIER_PATHS_V2[$((s-1))]}"; done) \
+  --model ClfCos classifier $(for s in "${SPLITS[@]}"; do echo "${CLASSIFIER_PATHS_COS[$((s-1))]}"; done) \
+  --model ClfCos32 classifier_video $(for s in "${SPLITS[@]}"; do echo "${CLASSIFIER_PATHS_COS[$((s-1))]}"; done) \
+  --model DINO_Trans transformer $(for s in "${SPLITS[@]}"; do echo "${DINO_BV2_PATHS[$((s-1))]}"; done) \
+  --model CNX_Trans convnext_transformer $(for s in "${SPLITS[@]}"; do echo "${CNX_BASELINE_PATHS[$((s-1))]}"; done) \
   --img_size 512 \
   --complex_augs

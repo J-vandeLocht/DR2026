@@ -1,37 +1,31 @@
 DINOv3 ConvNeXt-L backbone + same transformer head as dino/train_dino_transformer.py
-- backbone starts from DINOv3 LVD-1689M weights (no DinoClassifier stage), trained end-to-end on video bags
-- adapter turns the 1536x16x16 feature map (512px input) into one 1024-d vector per frame:
-  linear_attnpool (1x1 conv + LN + 2D sin/cos PE + learnable-query attention pooling, default) or linear_mean
-- no temporal encoding, no attention entropy loss
-- defaults = best unfrozen hp sweep config (8 heads, 1 block, lr 5e-5, backbone_lr_mult 0.3, distance_scale 0.2), but 12 epochs / lr_step 6 (generic, not DR-tuned, backbone needs longer than the ViT runs)
-- final LayerNorm after the transformer blocks (proper pre-norm stack, unlike dino/train_dino_transformer.py)
-- gradient accumulation was tried and removed (one optimizer step per video, shared transformer.utils.train_one_epoch_trans)
-- Paxos2025 only: job script uses mil_{train,val}_2025.json, no --fused_dataset
+- starts from LVD-1689M weights (no classifier stage), trained end-to-end on video bags, Paxos2025 only (mil_*_2025.json)
+- adapter (transformer/adapters.py, shared with the DINO dense path) maps the feature map to token(s) per frame:
+  linear_attnpool (1x1 conv + LN + 2D sin/cos PE + query attention pooling, default), linear_mean, grid;
+  --adapter_tokens K, --grid_pool max, --no_adapter_pe
+- --feature_stage/--feature_block take an earlier map (stage 3: 768x32x32), later blocks skipped
+- no temporal encoding, no entropy loss, final LayerNorm after the blocks
+- defaults: lr 1e-5, backbone x0.1, 1 block / 8 heads, cdw 0.2, cosine to 1e-7 (epochs default 12, baseline uses 25)
+- gradient accumulation and --freeze_epochs were tried and removed
 
-2026-10-13 collapse diagnosis
-- first runs (raw features, accum 4, lr 5e-5; frozen lr 3e-4) predicted one grade for all val videos every epoch (QWK 0)
-- generic ConvNeXt features: cos sim between videos ~0.94 (one shared direction), but a standardized logistic-regression probe on GAP features gets val QWK ~0.78
-- fix: per-channel standardization of the feature map with train-set stats (feat_mean/feat_std buffers)
-- head-only tests on cached frozen features: lr 3e-4 always collapses (even with grad clipping), lr 1e-4 seed-dependent (0.56-0.77), lr 5e-5/3e-5 standardized stable (~0.80-0.82); distance scaling no clear effect; linear_mean ~ linear_attnpool
-- warmup (backbone frozen 3 epochs, then x0.3 = 1.5e-5): QWK 0.64 -> 0.000 within the first unfrozen epoch, train loss back to start level; never recovered. Unfreezing itself breaks the features, not the random head. --freeze_epochs removed again.
-- frozen backbone, standardized, lr 5e-5 (full run, 8 epochs): best val QWK 0.758 (epoch 5), final 0.704
-- warmup (backbone frozen 3 epochs, then x0.3 = 1.5e-5): QWK 0.64 -> 0.000 within the first unfrozen epoch, train loss back to start level; never recovered. Unfreezing itself breaks the features, not the random head. --freeze_epochs removed again.
-- frozen backbone, standardized, lr 5e-5 (full run, 8 epochs): best val QWK 0.758 (epoch 5), final 0.704
-- unfreeze diagnostic (from best frozen ckpt, head 5e-5 / backbone 1.5e-5 Adam, logs convnext/logs/unfreeze_diag_*.log):
-  within 50 steps (backbone weights changed only ~0.2%) the raw backbone features drift by ~2x their own norm and
-  all videos map to the same adapter vector (cos sim 0.66 -> 1.00), probe preds one grade. Same with std clamped
-  at its median, with layer-scale gammas frozen, and in fp32 -> not standardization, not gamma, not fp16.
-  feat_std range is only 0.35-3.0 (median 0.76), no tiny-std channels.
-- LR schedule switched from StepLR (--lr_step) to per-epoch cosine annealing down to --min_lr (default 1e-7), applied to both head and backbone groups
+Baseline (2026-10-21): stage 3 last block, linear_attnpool, unfrozen x0.1, 25 ep, random-segment, --complex_augs,
+--selection_metric combined. 5 splits: QWK 0.883/0.867/0.821/0.877/0.795, mean 0.849 +- 0.039, acc 0.645, F1 0.564,
+RR 0.846 +- 0.045 (DINO frozen bv2: 0.840 +- 0.051, RR 0.877). Late epochs unstable.
 
-2026-10-14 linear_mean, backbone unfrozen x0.1 (first unfrozen runs that didn't collapse), Paxos2025 split_1 (same videos as stratified_splits_paxos2025/split_1):
-- std on, lr 5e-5, 12 ep StepLR(6):          best QWK 0.864 (ep 10), ref recall 0.788; last 0.859
-- std off, lr 5e-5, 12 ep StepLR(6):         best QWK 0.830 (ep 11), ref recall 0.848; QWK 0 for epochs 0-4, then recovered
-- std off, lr 1e-5, 18 ep cosine to 1e-7:    best QWK 0.848 (ep 15), ref recall 0.818; last 0.840; smoother, no collapse phase
-- standardization is not strictly required: it gives a faster/more stable start, but unstandardized runs recover
-- --cluster_sample added (same as dino/train_dino_transformer.py: train = random member per k-means cluster, val = medoids; Paxos2025 only)
-
-2026-10-14 linear_mean, unfrozen backbone x0.1 (all Paxos2025 split_1, same 60 val videos as the ViT baseline):
-- standardized, lr 5e-5, StepLR@6, 12 ep: best QWK 0.864 (ep 10, ref recall 0.788), final 0.859  <- best ConvNeXt so far
-- no standardization, lr 5e-5, StepLR@6, 12 ep: one grade for ep 0-4, then recovers; best 0.830 (ep 11, ref recall 0.848)
-- no standardization, lr 1e-5, cosine to 1e-7, 18 ep: learns from ep 1; best 0.848 (ep 15, ref recall 0.818), ep 12-17 stable 0.82-0.85
+History
+2026-10-13 collapse: first runs predicted one grade for all videos. Generic features are very similar across videos
+(cos sim ~0.94) but a standardized GAP probe reaches QWK ~0.78. Head lr >= 1e-4 collapses; 5e-5/3e-5 stable.
+Unfreezing at x0.3 broke the features within ~50 steps (all videos -> same adapter vector), not caused by std/gamma/fp16.
+Frozen + standardized, lr 5e-5: best QWK 0.758.
+2026-10-14 linear_mean, unfrozen x0.1 (first non-collapsing unfrozen runs), split 1: std on lr 5e-5 0.864; std off
+lr 5e-5 0.830 (collapsed ep 0-4, recovered); std off lr 1e-5 cosine 18 ep 0.848, smooth. --cluster_sample: 0.856 but
+overfits late, no gain over random sampling (unlike the ViT on old clips).
+2026-10-15 linear_attnpool (x0.1, no std, lr 1e-5, cosine 18 ep): best 0.855 (RR 0.758), overfits less than linear_mean
+(new clips 0.866). x0.3/x1.0 break it.
+2026-10-15 earlier layers (linear_mean, 18 ep): stage 3 last block 0.833, block 13 0.795, stage 2 never learns.
+2026-10-16 25 ep: stage 3 linear_mean 0.858, stage 3 linear_attnpool 0.871 (RR 0.848), stage 2 still fails.
+--bag_consistent_augs: 0.876 vs 0.871, no consistent effect.
+2026-10-20: feature standardization removed (old checkpoints load with feat_mean/feat_std dropped, *_std_* runs change outputs).
+2026-10-21: Paxos2020 mixing (split 1): QWK 0.880, RR 0.909 vs 0.888/0.879, no gain.
+2026-10-22: dense tokens (split 1, baseline HPs, K=4): linear_attnpool4 0.865/RR 0.848, grid4 0.828/RR 0.848 vs baseline
+0.883/0.909; grid4 overfits. Keep 1 token (unlike DINO).

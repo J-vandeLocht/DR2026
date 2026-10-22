@@ -6,16 +6,22 @@ import json
 import argparse
 
 from data.dataset import MILVideoDataset, MILVideoDatasetCluster
-from .utils import (make_train_transform_dino, make_val_transform_dino, load_dino_backbone,
+from .utils import (make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, load_dino_backbone,
                     load_backbone_from_classifier, freeze_module)
 from misc.training import (seed_everything, make_run_dir, video_search_dirs, make_balanced_loaders,
-                           make_optimizer, EpochLogger)
+                           make_optimizer, EpochLogger, SELECTION_METRICS)
+from transformer.adapters import ADAPTERS, build_adapter
 from transformer.model import BagTransformer
 from transformer.utils import train_one_epoch_trans, validate_extended_trans
 
 
 class DinoSelfAttention(BagTransformer):
     """DINOv3 ViT-L backbone (CLS token per frame) -> BagTransformer head.
+
+    dense_adapter (a transformer/adapters.py name) instead feeds the 32x32
+    patch-token grid (512px input) through that adapter, giving one or
+    dense_tokens (attnpool queries / grid side) tokens per frame, with a
+    final LayerNorm after the blocks (as in ConvNextSelfAttention).
 
     classifier_checkpoint_path and full_checkpoint_path are mutually
     exclusive: the former loads only backbone.* weights (strict) from a
@@ -35,6 +41,11 @@ class DinoSelfAttention(BagTransformer):
             num_classes=1,
             aggregation_mode="cls",
             num_query_tokens=1,
+            dense_adapter=None,
+            dense_tokens=None,
+            adapter_dim=1024,
+            adapter_pe=True,
+            grid_pool="avg",
             classifier_checkpoint_path=None,
             full_checkpoint_path=None,
     ):
@@ -46,10 +57,20 @@ class DinoSelfAttention(BagTransformer):
             )
 
         self.backbone = load_dino_backbone()
-        self._build_head(self.backbone.embed_dim, num_heads, ffn_dim, dropout, num_blocks, num_frames,
-                         num_classes, aggregation_mode, num_query_tokens, use_pos_embedding=use_pos_embedding)
+        self.dense_adapter = dense_adapter
+        if dense_adapter is None:
+            self.adapter = None
+            dim, tokens_per_frame = self.backbone.embed_dim, 1
+        else:
+            self.adapter = build_adapter(dense_adapter, self.backbone.embed_dim, adapter_dim, dense_tokens,
+                                         adapter_pe, grid_pool)
+            dim, tokens_per_frame = adapter_dim, self.adapter.tokens_per_frame
+        self._build_head(dim, num_heads, ffn_dim, dropout, num_blocks, num_frames,
+                         num_classes, aggregation_mode, num_query_tokens, use_pos_embedding=use_pos_embedding,
+                         final_norm=dense_adapter is not None, tokens_per_frame=tokens_per_frame)
         print(
             f"--- DINO Self-Attention [{self.L} features, {self.num_blocks} block(s), "
+            f"{f'dense={dense_adapter} ({tokens_per_frame} token(s)/frame), ' if dense_adapter else ''}"
             f"pos_embedding={self.use_pos_embedding}, aggregation={self.aggregation_mode}"
             f"{f' (num_query_tokens={self.num_query_tokens})' if self.aggregation_mode == 'multi_token' else ''}"
             f"] weights initialized ---"
@@ -69,9 +90,18 @@ class DinoSelfAttention(BagTransformer):
             # instead of storing them (only engages in train mode).
             self.backbone.grad_checkpointing = True
 
+    def backbone_feature_map(self, x):
+        """[N, 3, H, W] -> [N, C, H/16, W/16] grid of normed DINO patch tokens."""
+        tokens = self.backbone.forward_features(x)["x_norm_patchtokens"]  # [N, h*w, C]
+        p = self.backbone.patch_size
+        return tokens.transpose(1, 2).reshape(x.size(0), -1, x.size(-2) // p, x.size(-1) // p)
+
     def extract_features(self, x):
-        # [num_frames, 3, H, W] -> [num_frames, L] DINO CLS tokens.
-        return self.backbone.forward_features(x)["x_norm_clstoken"]
+        # [num_frames, 3, H, W] -> [num_frames, L] DINO CLS tokens, or the
+        # adapter's [num_frames, (K,) L] tokens from the patch grid.
+        if self.adapter is None:
+            return self.backbone.forward_features(x)["x_norm_clstoken"]
+        return self.adapter(self.backbone_feature_map(x))
 
 
 def train_self_attention(args):
@@ -83,7 +113,13 @@ def train_self_attention(args):
                 f"{args.split_path.split('/')[-1]}_"
                 f"{"full" if args.train_json == "mil_train.json" else args.train_json.split(".")[0].split("_")[-1]}"
                 f"{f'_{args.aggregation_mode}' if args.aggregation_mode != 'cls' else ''}"
-                f"{'_cluster' if args.cluster_sample else ''}")
+                f"{f'_dense-{args.dense_adapter}{args.dense_tokens or ""}' if args.dense_adapter else ''}"
+                f"{'_nope' if args.no_adapter_pe else ''}"
+                f"{f'_{args.grid_pool}pool' if args.grid_pool != 'avg' else ''}"
+                f"{'_noclf' if args.classifier_checkpoint is None else ''}"
+                f"{'_cluster' if args.cluster_sample else ''}"
+                f"{'_bagaug' if args.bag_consistent_augs else ''}"
+                f"{f'_sel-{args.selection_metric}' if args.selection_metric != 'default' else ''}")
     run_name, run_dir = make_run_dir("transformer", description, args.run_tag)
 
     # --- Model ---
@@ -98,6 +134,11 @@ def train_self_attention(args):
         num_frames=args.num_frames,
         aggregation_mode=args.aggregation_mode,
         num_query_tokens=args.num_query_tokens,
+        dense_adapter=args.dense_adapter,
+        dense_tokens=args.dense_tokens,
+        adapter_dim=args.adapter_dim,
+        adapter_pe=not args.no_adapter_pe,
+        grid_pool=args.grid_pool,
         num_classes=1 if args.binary_classification else 5,
     )
     model = DinoSelfAttention(classifier_checkpoint_path=args.classifier_checkpoint,
@@ -107,7 +148,11 @@ def train_self_attention(args):
         json.dump(architecture_config, f, indent=2)
 
     # --- Data ---
-    train_trans = make_train_transform_dino(args.img_size, args.complex_augs)
+    # --bag_consistent_augs: random augs drawn once per bag instead of once per frame.
+    if args.bag_consistent_augs:
+        train_trans, train_bag_trans = make_bag_train_transforms_dino(args.img_size, args.complex_augs)
+    else:
+        train_trans, train_bag_trans = make_train_transform_dino(args.img_size, args.complex_augs), None
     val_trans = make_val_transform_dino(args.img_size, args.complex_augs)
     search_dir_paths = video_search_dirs(args.fused_dataset)
     # Cluster sampling: one random frame per cluster for training, cluster medoids for validation.
@@ -115,6 +160,7 @@ def train_self_attention(args):
     train_ds = dataset_cls(os.path.join(args.split_path, args.train_json),
                            num_frames=args.num_frames,
                            transform=train_trans,
+                           bag_transform=train_bag_trans,
                            random_segment_sample=args.cluster_sample or args.random_segment_sample,
                            search_dir_paths=search_dir_paths)
     val_ds = dataset_cls(os.path.join(args.split_path, args.val_json),
@@ -125,12 +171,17 @@ def train_self_attention(args):
 
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     optimizer = make_optimizer(model, args.lr, args.backbone_lr_mult, args.optimizer, args.weight_decay)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=0.1)
+    if args.lr_schedule == 'cosine':
+        # Per-epoch cosine decay down to min_lr (same as convnext/train_convnext_transformer.py).
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.min_lr)
+    else:
+        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=0.3)
     # Mixed precision: an unfrozen ViT-L backbone over a frame bag in fp32
     # exceeds 24GB; autocast + GradScaler cuts activation memory.
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
 
-    logger = EpochLogger(run_name, run_dir, args, args.binary_classification, "best_sa_model.pth")
+    logger = EpochLogger(run_name, run_dir, args, args.binary_classification, "best_sa_model.pth",
+                         selection=args.selection_metric)
     print(f"Starting Self-Attention Training: {run_name}")
 
     for epoch in range(args.epochs):
@@ -159,7 +210,12 @@ def build_parser():
     parser.add_argument('--val_json', type=str, default="mil_val.json")
     parser.add_argument('--freeze_backbone', action='store_true')
     parser.add_argument('--epochs', type=int, default=15)
-    parser.add_argument('--lr_step', type=int, default=10)
+    parser.add_argument('--lr_step', type=int, default=10,
+                        help='StepLR step size in epochs (only for --lr_schedule step).')
+    parser.add_argument('--lr_schedule', type=str, default='step', choices=['step', 'cosine'],
+                        help="'step' = StepLR(--lr_step, gamma 0.3), 'cosine' = cosine annealing to --min_lr over --epochs.")
+    parser.add_argument('--min_lr', type=float, default=1e-7,
+                        help='Final LR of the cosine schedule (only for --lr_schedule cosine).')
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=1e-5)
     parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamw'])
@@ -179,13 +235,29 @@ def build_parser():
     parser.add_argument('--num_query_tokens', type=int, default=4,
                         help='Aggregator tokens for --aggregation_mode multi_token (ignored otherwise).')
     parser.add_argument('--num_frames', type=int, default=32)
+    parser.add_argument('--dense_adapter', type=str, default=None, choices=list(ADAPTERS),
+                        help='Use the patch-token grid through this adapter (transformer/adapters.py) instead of CLS tokens.')
+    parser.add_argument('--dense_tokens', type=int, default=None,
+                        help='Tokens per frame for --dense_adapter: queries for linear_attnpool (default 1), '
+                             'grid side for grid (default 2 -> 4 tokens).')
+    parser.add_argument('--adapter_dim', type=int, default=1024,
+                        help='--dense_adapter output dim = transformer width.')
+    parser.add_argument('--no_adapter_pe', action='store_true',
+                        help='Drop the 2D sin/cos PE in the linear_attnpool dense adapter (content-only pooling).')
+    parser.add_argument('--grid_pool', type=str, default='avg', choices=['avg', 'max'],
+                        help='Per-cell pooling of the grid dense adapter.')
     parser.add_argument('--backbone_lr_mult', type=float, default=0.1,
                         help='Backbone LR = --lr * this (only matters when --freeze_backbone is omitted).')
     parser.add_argument('--attn_entropy_weight', type=float, default=0.0,
                         help='Entropy-minimization weight on CLS->frame attention (peakier attention). 0 disables.')
+    parser.add_argument('--selection_metric', type=str, default='default', choices=SELECTION_METRICS,
+                        help="Best-checkpoint criterion: 'default' = QWK (5-class) / PR-AUC (binary), "
+                             "'combined' = mean of QWK, referable recall and accuracy (5-class only).")
     parser.add_argument('--distance_scale_weight', type=float, default=0.2,
                         help='Distance-Scaled CE weight: loss *= 1 + w*|pred_grade-true_grade| (5-class only). 0 disables.')
     parser.add_argument('--random_segment_sample', action='store_true')
+    parser.add_argument('--bag_consistent_augs', action='store_true',
+                        help='Draw the random train augmentations once per bag (same for all frames) instead of per frame.')
     parser.add_argument('--fused_dataset', action='store_true')
     parser.add_argument('--cluster_sample', action='store_true',
                         help='Sample one frame per k-means cluster (clustering/cluster_frames.py) instead of by time; Paxos2025 only.')
@@ -200,5 +272,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.cluster_sample and args.fused_dataset:
         parser.error('--cluster_sample only has cluster files for Paxos2025, not --fused_dataset')
+    if args.selection_metric == 'combined' and args.binary_classification:
+        parser.error('--selection_metric combined (QWK + referable recall + acc) is 5-class only')
+    if args.no_adapter_pe and args.dense_adapter != 'linear_attnpool':
+        parser.error('--no_adapter_pe needs --dense_adapter linear_attnpool')
+    if args.grid_pool != 'avg' and args.dense_adapter != 'grid':
+        parser.error('--grid_pool max needs --dense_adapter grid')
 
     train_self_attention(args)

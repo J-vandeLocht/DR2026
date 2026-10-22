@@ -1,108 +1,43 @@
-dinov3 is the cloned official repository of DINOv3.
-We use the ViT-L version of DINOv3.
+dinov3/ = cloned official DINOv3 repo. Weights in dino/: ViT-L LVD-1689M (used everywhere), ConvNeXt-L (convnext/),
+ConvNeXt-B and ViT-L SAT-493M (satellite; downloaded 2026-10-22, not used yet).
 
-train_dino_classifier.py:
-trains a DINO classifier on the cropped frames, given a chosen split.
+train_dino_classifier.py: frame classifier (backbone + MLP head) on the hand-picked cropped frames. Original classifiers:
+lr 5e-6, bs 2, 15 ep, StepLR@10, --complex_augs, unfrozen. Optional --lr_schedule cosine, --distance_scale_weight,
+--grad_checkpointing (bs 16 in ~7GB).
+train_dino_mil.py: binary gated-attention MIL over frame bags, optional --classifier_checkpoint init.
+train_dino_transformer.py: transformer aggregator (DinoSelfAttention, head shared with convnext/ via transformer/model.py)
+over 32-frame bags; --random_segment_sample (default in baseline v2) or --cluster_sample; dense patch-token path via
+--dense_adapter/--dense_tokens. Saves architecture_config.json; load with DinoSelfAttention.from_checkpoint(run_dir).
+hp_sweep.py: transformer HP grid search on split_1 (hp_sweep_results_merged.csv), args from build_parser().
+vis_attention.py / vis_video_results.py / vis_classifier_attention.py: per-video attention plots / per-video prediction
+CSVs for several model types (incl. convnext_transformer) / occlusion heatmaps (5-class scored by P(grade >= 2)).
+utils.py: backbone loading, MLP head, transforms.
 
-train_dino_mil.py:
-trains a DINO MIL model (binary) on the cropped informative clips, given a chosen split. Can also use the classifier
-weights produced in train_dino_classifier (--classifier_checkpoint).
+Removed experiments (git history):
+- train_dino_transformer_rope.py (RoPE on frame position in the original video): 5 splits mean QWK ~0.80, abandoned.
+- train_dino_transformer_alt_sampling.py (hierarchical anchors x regions): never finished an epoch.
+- vis_mil_results.py, full_evaluation.py: replaced by vis_video_results.py. Last binary MIL 4-way eval (split 1):
+  PR-AUC / F1 / acc max-attention frame 0.974/0.831/0.776, uniform 32 0.979/0.900/0.897, all frames 0.972/0.900/0.897,
+  10x ensemble 0.973/0.900/0.897.
+- --unfreeze_epoch, --drop_path_rate, --label_smoothing (removed 2026-10-18, results below).
 
-utils.py:
-some utils mostly specific to DINO
-
-train_dino_transformer.py:
-trains the transformer aggregator (DinoSelfAttention, head shared with convnext/ via transformer/model.py) over
-32-frame bags; --cluster_sample samples one frame per k-means cluster (clustering/, Paxos2025 only). Saves
-architecture_config.json next to the checkpoint; load runs with DinoSelfAttention.from_checkpoint(run_dir).
-
-hp_sweep.py:
-grid search over transformer HPs on split_1 (results: hp_sweep_results_merged.csv). Trial args come from
-train_dino_transformer.build_parser(), so new training args are picked up automatically.
-
-vis_attention.py / vis_video_results.py / vis_classifier_attention.py:
-attention plots per video / per-video prediction CSVs for several models / occlusion heatmaps for the frame
-classifier (5-class checkpoints are scored by P(grade >= 2)).
-
-Removed experiments (see git history):
-- train_dino_transformer_rope.py (RoPE on each frame's position in the original video): 5-class, 5 splits
-  (runs/dino_sa_all_split_*_1005_1239_rope_1000.0_300): best QWK 0.843 / 0.807 / 0.839 / 0.725 / 0.775
-  (mean ~0.80); abandoned. Needed frame_maps/ JSONs that no pipeline step writes.
-- train_dino_transformer_alt_sampling.py (hierarchical: 32 anchor frames x 16-frame regions, local + global
-  attention): one run (runs/dino_hier_anchor32x16_all_split_1_0929_2004_full) never finished an epoch, no results.
-- vis_mil_results.py, full_evaluation.py: superseded by vis_video_results.py. Last 4-way eval of the MIL model
-  (max-attention frame / uniform 32 / all frames / 10x ensemble), kept for reference:
-
-Four different evals on the validation set:
-Cat: slurm-196461.out
---- DINO MIL [1024 features] weights initialized ---
-Loading checkpoint from: mil/models/dino_mil_complex_split_1/best_mil_model.pth
-Backbone weights loaded.
-MIL Head weights loaded.
-Starting 4-Way Evaluation...
-Processed R052R | Frames: 593
-Processed IMG_5030 | Frames: 562
-Processed R068L | Frames: 834
-Processed IMG_2516 | Frames: 415
-Processed IMG_3432 | Frames: 1646
-Processed IMG_4967 | Frames: 948
-Processed IMG_3433 | Frames: 1118
-Processed IMG_4952 | Frames: 287
-Processed IMG_3445 | Frames: 1281
-Processed IMG_4445 | Frames: 128
-Processed IMG_4956 | Frames: 578
-Processed R015L2 | Frames: 305
-Processed IMG_5057 | Frames: 1317
-Processed IMG_2512 | Frames: 196
-Processed IMG_3444 | Frames: 1674
-Processed R065L | Frames: 926
-Processed IMG_5039 | Frames: 772
-Processed R027L | Frames: 1659
-Processed R059R | Frames: 327
-Processed IMG_3489 | Frames: 2059
-Processed IMG_3271 | Frames: 833
-Processed IMG_4648 | Frames: 690
-Processed IMG_2611 | Frames: 867
-Processed IMG_2544 | Frames: 1514
-Processed IMG_3457 | Frames: 1384
-Processed IMG_4681 | Frames: 1102
-Processed IMG_5033 | Frames: 1167
-Processed IMG_5031 | Frames: 947
-Processed IMG_2608 | Frames: 412
-Processed IMG_3456 | Frames: 1263
-Processed R026L2 | Frames: 1537
-Processed IMG_4873 | Frames: 1301
-Processed IMG_4679 | Frames: 532
-Processed IMG_2578 | Frames: 127
-Processed R023L | Frames: 136
-Processed R058R | Frames: 907
-Processed IMG_4931 | Frames: 982
-Processed IMG_4174 | Frames: 536
-Processed IMG_3269 | Frames: 659
-Processed IMG_4942 | Frames: 671
-Processed IMG_4650 | Frames: 1057
-Processed R029L2 | Frames: 1398
-Processed IMG_4883 | Frames: 640
-Processed IMG_2605 | Frames: 6
-Processed IMG_4662 | Frames: 100
-Processed IMG_5009 | Frames: 1099
-Processed IMG_2871 | Frames: 308
-Processed IMG_4953 | Frames: 249
-Processed R056L | Frames: 827
-Processed IMG_3472 | Frames: 811
-Processed R042R | Frames: 301
-Processed IMG_3439 | Frames: 1509
-Processed IMG_4897 | Frames: 627
-Processed IMG_2892 | Frames: 202
-Processed IMG_3454 | Frames: 1283
-Processed IMG_2708 | Frames: 644
-Processed IMG_4922 | Frames: 316
-Processed IMG_2868 | Frames: 397
-
-========================================
-FINAL RESULTS
-========================================
-[Strategy A (Max Attn Frame)] PR-AUC: 0.9738 | F1: 0.8312 | Acc: 0.7759
-[Strategy B (Uniform 32)  ] PR-AUC: 0.9791 | F1: 0.9000 | Acc: 0.8966
-[Strategy C (All Frames)    ] PR-AUC: 0.9721 | F1: 0.9000 | Acc: 0.8966
-[Strategy D (10x Ensemble)  ] PR-AUC: 0.9731 | F1: 0.9000 | Acc: 0.8966
+2026-10-17: fine-tuned backbone (bv2 args without --freeze_backbone, x0.1, 18 ep cosine, split 1): QWK 0.874, acc 0.733,
+F1 0.667, RR 0.909 vs frozen 0.848/0.683/0.646/0.848; ~19 min/epoch, 10.7GB (autocast + grad checkpointing).
+Splits 2/3: 0.849/0.827 (frozen 0.885/0.858), peak at ep 3/2 then overfit. 3-split mean QWK 0.850 vs 0.864, RR 0.918 vs 0.866.
+--ffn_dim 1024 vs 2048: no real difference.
+2026-10-18: overfit fixes (splits 2/3): x0.03 -> 0.845/0.788 (no help); drop_path 0.1 + label smoothing 0.1 -> 0.801/0.853.
+Head warm-up --unfreeze_epoch 3: mean QWK 0.851 (no gain). Frozen stays best QWK.
+No classifier init (pretrained DINOv3, ConvNeXt HPs): QWK 0.827, RR 0.758; with warm-up 0.823 -> classifier stage matters.
+2026-10-21: baseline v2 (frozen, cosine, random-segment, combined = QWK+RR+acc), 5 splits: QWK 0.871/0.859/0.856/0.864/0.749,
+mean 0.840 +- 0.051, acc 0.642, F1 0.552, RR 0.877 +- 0.062. ConvNeXt baseline 0.849 +- 0.039, RR 0.846 - tie.
+Paxos2020 mixing (split 1): QWK 0.885, RR 0.879 vs 0.871/0.818 (one fold).
+2026-10-21: 5-split video-level eval vs classifier ensembles: QWK Clf 0.767, Clf32 0.774, DINO 0.840, ConvNeXt 0.849
+(data/multi_eval_paxos2025_baselines).
+2026-10-21: dense patch tokens (split 1, frozen bv2 args), best QWK/RR: attnpool1 0.860/0.909, attnpool4 0.867/0.939,
+grid2 0.850/0.879, grid4 0.888/0.879 vs CLS 0.871/0.818. Late epochs noisier. Within noise on one fold.
+Position probe: frozen patch tokens encode (row, col) linearly (ridge R2 0.996/0.994, MAE ~0.5 patch) -> added --no_adapter_pe.
+2026-10-22: dense ablations (split 1): grid4 maxpool 0.860/RR 0.879 (avg 0.888), attnpool4 no PE 0.846/0.879 (PE 0.867/0.939);
+without classifier init 0.685 and 0.774. Keep avg pooling + PE. Open: attnpool4 on splits 2-5.
+2026-10-22: classifier cosine + CDW 0.2 (bs 2, 5 splits): frame-level QWK 0.765 vs 0.750, last epoch 0.754 vs 0.708 (stable late);
+bs 16 underfits (0.682). Video level (data/multi_eval_paxos2025_clfcos): Clf 0.798 vs 0.767, Clf32 0.729 vs 0.774;
+transformers still +0.04-0.05 (Clf) / +0.11-0.12 (Clf32).

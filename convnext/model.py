@@ -3,75 +3,16 @@ import torch.nn as nn
 from torch.utils.checkpoint import checkpoint
 
 from dino.utils import freeze_module
+from transformer.adapters import build_adapter
 from transformer.model import BagTransformer
 
 
 CONVNEXT_WEIGHTS = "dino/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth"
 
 
-def pos_enc_2d(H, W, D, device):
-    """2D sine/cosine encoding (DETR-style). D must be divisible by 4."""
-    d = D // 4
-    freq = 1.0 / (10000 ** (torch.arange(d, device=device) / d))       # d
-    y = torch.arange(H, device=device)[:, None] * freq                  # H×d
-    x = torch.arange(W, device=device)[:, None] * freq                  # W×d
-    y = torch.cat([y.sin(), y.cos()], dim=1)[:, None, :].expand(H, W, 2 * d)
-    x = torch.cat([x.sin(), x.cos()], dim=1)[None, :, :].expand(H, W, 2 * d)
-    return torch.cat([y, x], dim=-1).reshape(H * W, D)                  # (H·W)×D
-
-
-class LinearMeanAdapter(nn.Module):
-    """1x1 conv projection -> LayerNorm -> spatial mean. No positional
-    encoding: a constant PE added before mean pooling would only shift every
-    frame vector by the same offset."""
-
-    def __init__(self, in_ch, dim):
-        super().__init__()
-        self.proj = nn.Conv2d(in_ch, dim, kernel_size=1)
-        self.norm = nn.LayerNorm(dim)
-
-    def forward(self, f):
-        t = self.proj(f).flatten(2).transpose(1, 2)  # B×(H·W)×D
-        return self.norm(t).mean(dim=1)              # B×D
-
-
-class LinearAttnPoolAdapter(nn.Module):
-    """1x1 conv projection -> LayerNorm -> + 2D sin/cos PE -> attention
-    pooling with a single learnable query over the H·W spatial tokens."""
-
-    def __init__(self, in_ch, dim, num_heads=4):
-        super().__init__()
-        self.proj = nn.Conv2d(in_ch, dim, kernel_size=1)
-        self.norm = nn.LayerNorm(dim)
-        self.query = nn.Parameter(torch.zeros(1, 1, dim))
-        self.attn = nn.MultiheadAttention(dim, num_heads, batch_first=True)
-        self.out_norm = nn.LayerNorm(dim)
-        nn.init.trunc_normal_(self.query, std=0.02)
-
-    def forward(self, f):
-        f = self.proj(f)                             # B×D×H×W
-        B, D, H, W = f.shape
-        t = f.flatten(2).transpose(1, 2)             # B×(H·W)×D
-        t = self.norm(t) + pos_enc_2d(H, W, D, t.device).to(t.dtype)
-        pooled, _ = self.attn(self.query.expand(B, -1, -1), t, t, need_weights=False)
-        return self.out_norm(pooled.squeeze(1))      # B×D
-
-
-ADAPTERS = {
-    "linear_mean": LinearMeanAdapter,
-    "linear_attnpool": LinearAttnPoolAdapter,
-}
-
-
-def build_adapter(name, in_ch, dim):
-    if name not in ADAPTERS:
-        raise ValueError(f"Unknown adapter '{name}', choose from {list(ADAPTERS)}")
-    return ADAPTERS[name](in_ch, dim)
-
-
 class ConvNextSelfAttention(BagTransformer):
-    """DINOv3 ConvNeXt-L backbone -> adapter (feature map -> one vector per
-    frame) -> the same BagTransformer head as DinoSelfAttention, plus a final
+    """DINOv3 ConvNeXt-L backbone -> adapter (feature map -> one or more
+    tokens per frame) -> the same BagTransformer head as DinoSelfAttention, plus a final
     LayerNorm. No temporal encoding.
 
     backbone_weights=None builds the backbone with random init (smoke tests);
@@ -84,6 +25,9 @@ class ConvNextSelfAttention(BagTransformer):
             grad_checkpointing=True,
             adapter="linear_attnpool",
             adapter_dim=1024,
+            adapter_pe=True,
+            adapter_tokens=None,
+            grid_pool="avg",
             num_heads=8,
             ffn_dim=2048,
             dropout=0.1,
@@ -92,6 +36,8 @@ class ConvNextSelfAttention(BagTransformer):
             num_classes=1,
             aggregation_mode="cls",
             num_query_tokens=1,
+            feature_stage=4,
+            feature_block=-1,
             backbone_weights=CONVNEXT_WEIGHTS,
             full_checkpoint_path=None,
     ):
@@ -108,22 +54,30 @@ class ConvNextSelfAttention(BagTransformer):
             self.backbone = torch.hub.load("dino/dinov3", "dinov3_convnext_large",
                                            source="local", pretrained=False)
 
-        # Per-channel standardization of the backbone feature map. Generic
-        # DINOv3 ConvNeXt features share one dominant direction across all
-        # videos (cos sim ~0.94), which left the randomly initialised head
-        # stuck predicting a single grade; subtracting the train-set mean and
-        # dividing by the std (as a linear probe does) fixes that. Identity
-        # until fit_feature_stats() is called; saved with the state dict.
-        C = self.backbone.embed_dim
-        self.register_buffer("feat_mean", torch.zeros(C))
-        self.register_buffer("feat_std", torch.ones(C))
+        # Feature map taken after block `feature_block` (-1 = last) of stage `feature_stage` (1-4). The
+        # pretrained final norm is only applied to the full backbone (DINOv3 itself uses no norm on
+        # intermediate stages); later blocks/stages are frozen since they don't contribute.
+        self.feature_stage = feature_stage
+        self.feature_block = feature_block % len(self.backbone.stages[feature_stage - 1])
+        self.use_final_norm = feature_stage == 4 and self.feature_block == len(self.backbone.stages[3]) - 1
+        unused = [blk for i, stage in enumerate(self.backbone.stages) for j, blk in enumerate(stage)
+                  if (i + 1, j) > (feature_stage, self.feature_block)]
+        if not self.use_final_norm:
+            unused.append(self.backbone.norm)
+        unused += [self.backbone.downsample_layers[i] for i in range(feature_stage, 4)]
+        for module in unused:
+            freeze_module(module)
 
-        self.adapter = build_adapter(adapter, C, adapter_dim)
+        C = self.backbone.embed_dims[feature_stage - 1]
+        self.adapter = build_adapter(adapter, C, adapter_dim, adapter_tokens, adapter_pe, grid_pool)
         # Final norm of the pre-norm stack (as in ViT), before the classifier reads the tokens.
         self._build_head(adapter_dim, num_heads, ffn_dim, dropout, num_blocks, num_frames, num_classes,
-                         aggregation_mode, num_query_tokens, final_norm=True)
+                         aggregation_mode, num_query_tokens, final_norm=True,
+                         tokens_per_frame=self.adapter.tokens_per_frame)
         print(
-            f"--- ConvNeXt Self-Attention [adapter={self.adapter_name}, {self.L} features, "
+            f"--- ConvNeXt Self-Attention [adapter={self.adapter_name} ({self.adapter.tokens_per_frame} token(s)/frame), "
+            f"features from stage {feature_stage} "
+            f"block {self.feature_block} ({C} ch), {self.L} features, "
             f"{self.num_blocks} block(s), aggregation={self.aggregation_mode}] weights initialized ---"
         )
 
@@ -137,39 +91,19 @@ class ConvNextSelfAttention(BagTransformer):
     # MODULAR EVALUATION METHODS
     # ---------------------------------------------------------
     def backbone_feature_map(self, x):
-        """[N, 3, H, W] -> [N, C, H/32, W/32] final-stage feature map (with the
-        pretrained final norm), checkpointing each ConvNeXt block when
-        fine-tuning so a 32-frame bag fits in 24GB."""
+        """[N, 3, H, W] -> [N, C, H/s, W/s] feature map after the configured stage/block
+        (s = 4, 8, 16, 32 for stages 1-4; final norm only for the full backbone),
+        checkpointing each ConvNeXt block when fine-tuning so a 32-frame bag fits in 24GB."""
         use_ckpt = self.grad_checkpointing and self.training and torch.is_grad_enabled()
-        for downsample, stage in zip(self.backbone.downsample_layers, self.backbone.stages):
+        stages = zip(self.backbone.downsample_layers[:self.feature_stage], self.backbone.stages[:self.feature_stage])
+        for i, (downsample, stage) in enumerate(stages):
             x = downsample(x)
-            for block in stage:
+            last = self.feature_block if i == self.feature_stage - 1 else len(stage) - 1
+            for block in stage[:last + 1]:
                 x = checkpoint(block, x, use_reentrant=False) if use_ckpt else block(x)
-        x = self.backbone.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
-        return (x - self.feat_mean[:, None, None]) / self.feat_std[:, None, None]
-
-    @torch.no_grad()
-    def fit_feature_stats(self, bags, device):
-        """Set feat_mean/feat_std to the per-channel mean/std of the (pretrained,
-        unstandardized) backbone feature map over all frames and spatial
-        positions in `bags` (an iterable of [num_frames, 3, H, W] tensors)."""
-        was_training = self.training
-        self.eval()
-        self.feat_mean.zero_()
-        self.feat_std.fill_(1.0)
-        s = s2 = None
-        n = 0
-        for bag in bags:
-            with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=device.type == "cuda"):
-                f = self.backbone_feature_map(bag.to(device))
-            f = f.float().permute(1, 0, 2, 3).flatten(1)  # [C, frames*H*W]
-            s = f.sum(1) if s is None else s + f.sum(1)
-            s2 = (f ** 2).sum(1) if s2 is None else s2 + (f ** 2).sum(1)
-            n += f.shape[1]
-        mean = s / n
-        self.feat_mean.copy_(mean)
-        self.feat_std.copy_((s2 / n - mean ** 2).clamp_min(1e-6).sqrt())
-        self.train(was_training)
+        if self.use_final_norm:
+            x = self.backbone.norm(x.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        return x
 
     def extract_features(self, x):
         # [N, 3, H, W] -> [N, L]: one vector per frame for the transformer head.

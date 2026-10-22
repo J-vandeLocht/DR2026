@@ -288,6 +288,7 @@ def save_confusion_matrix(y_true, y_pred, tag, run_dir, class_names):
 
 
 def analyse_multiclass(df, split_name, model_info, output_dir):
+    df = df.dropna(subset=[model_info["pred_col"]])  # e.g. Clf on videos without hand-picked frames
     y_true = df['grade'].values.astype(int)
     y_pred = df[model_info["pred_col"]].values.astype(int)
     y_probs = df[model_info["prob_cols"]].values.astype(float)
@@ -460,8 +461,9 @@ def main(args):
 
                 comb = res["combined"].setdefault(name, {"y_true": [], "y_pred": [],
                                                          "classes": len(info["prob_cols"])})
-                comb["y_true"].extend(df['grade'].values.astype(int))
-                comb["y_pred"].extend(df[info["pred_col"]].values.astype(int))
+                valid = df.dropna(subset=[info["pred_col"]])
+                comb["y_true"].extend(valid['grade'].values.astype(int))
+                comb["y_pred"].extend(valid[info["pred_col"]].values.astype(int))
 
             res["rows"].append(row)
             res["tracker"][split_name][name] = wrong

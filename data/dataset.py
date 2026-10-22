@@ -59,12 +59,15 @@ class FrameDataset(Dataset):
 
 
 class MILVideoDataset(Dataset):
-    def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False, search_dir_paths=None):
+    def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False, search_dir_paths=None,
+                 bag_transform=None):
+        """`transform` is applied per frame; optional `bag_transform` once to the stacked [T, C, H, W] bag."""
         with open(json_path, 'r') as f:
             self.label_map = json.load(f)
 
         self.num_frames = num_frames
         self.transform = transform
+        self.bag_transform = bag_transform
         self.random_segment_sample = random_segment_sample
 
         if search_dir_paths is None:
@@ -210,7 +213,8 @@ class MILVideoDataset(Dataset):
             raise RuntimeError(
                 f"Critical failure: Expected {self.num_frames} frames from {path}, but ended up with {len(frames)}.")
 
-        return torch.stack(frames)
+        bag = torch.stack(frames)
+        return self.bag_transform(bag) if self.bag_transform else bag
 
 
 class MILVideoDatasetCluster(MILVideoDataset):
@@ -222,9 +226,10 @@ class MILVideoDatasetCluster(MILVideoDataset):
     """
 
     def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False,
-                 search_dir_paths=None, cluster_dir_paths=None):
+                 search_dir_paths=None, cluster_dir_paths=None, bag_transform=None):
         super().__init__(json_path, num_frames=num_frames, transform=transform,
-                         random_segment_sample=random_segment_sample, search_dir_paths=search_dir_paths)
+                         random_segment_sample=random_segment_sample, search_dir_paths=search_dir_paths,
+                         bag_transform=bag_transform)
 
         if search_dir_paths is None:
             search_dir_paths = ["data/ensemble_results/cleaned_videos"]
