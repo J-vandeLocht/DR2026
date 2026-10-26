@@ -1,3 +1,0 @@
-Legacy, no scripts left (git history only). Pretrained DINO on the public Kaggle DR dataset
-(https://www.kaggle.com/datasets/ascanipek/eyepacs-aptos-messidor-diabetic-retinopathy), best weights by QWK.
-Did not help the final DINO models.

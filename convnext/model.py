@@ -7,15 +7,18 @@ from transformer.adapters import build_adapter
 from transformer.model import BagTransformer
 
 
-CONVNEXT_WEIGHTS = "dino/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth"
+CONVNEXT_WEIGHTS = {
+    "large": "dino/dinov3_convnext_large_pretrain_lvd1689m-61fa432d.pth",
+    "base": "dino/dinov3_convnext_base_pretrain_lvd1689m-801f2ba9.pth",
+}
 
 
 class ConvNextSelfAttention(BagTransformer):
-    """DINOv3 ConvNeXt-L backbone -> adapter (feature map -> one or more
+    """DINOv3 ConvNeXt-L (or -B, backbone_arch="base") backbone -> adapter (feature map -> one or more
     tokens per frame) -> the same BagTransformer head as DinoSelfAttention, plus a final
     LayerNorm. No temporal encoding.
 
-    backbone_weights=None builds the backbone with random init (smoke tests);
+    backbone_weights="pretrained" loads the DINOv3 LVD weights for backbone_arch, None builds the backbone with random init (smoke tests);
     full_checkpoint_path loads a full ConvNextSelfAttention state dict
     strictly (architecture must match; prefer from_checkpoint(run_dir))."""
 
@@ -27,7 +30,6 @@ class ConvNextSelfAttention(BagTransformer):
             adapter_dim=1024,
             adapter_pe=True,
             adapter_tokens=None,
-            grid_pool="avg",
             num_heads=8,
             ffn_dim=2048,
             dropout=0.1,
@@ -38,7 +40,8 @@ class ConvNextSelfAttention(BagTransformer):
             num_query_tokens=1,
             feature_stage=4,
             feature_block=-1,
-            backbone_weights=CONVNEXT_WEIGHTS,
+            backbone_arch="large",
+            backbone_weights="pretrained",
             full_checkpoint_path=None,
     ):
         super().__init__()
@@ -46,13 +49,14 @@ class ConvNextSelfAttention(BagTransformer):
         self.adapter_name = adapter
         self.grad_checkpointing = grad_checkpointing and not freeze_backbone
 
+        self.backbone_arch = backbone_arch
+        hub_name = f"dinov3_convnext_{backbone_arch}"
         if backbone_weights is not None and full_checkpoint_path is None:
-            self.backbone = torch.hub.load("dino/dinov3", "dinov3_convnext_large",
-                                           source="local", weights=backbone_weights)
+            weights = CONVNEXT_WEIGHTS[backbone_arch] if backbone_weights == "pretrained" else backbone_weights
+            self.backbone = torch.hub.load("dino/dinov3", hub_name, source="local", weights=weights)
         else:
             # Random init; full_checkpoint_path overwrites it below anyway.
-            self.backbone = torch.hub.load("dino/dinov3", "dinov3_convnext_large",
-                                           source="local", pretrained=False)
+            self.backbone = torch.hub.load("dino/dinov3", hub_name, source="local", pretrained=False)
 
         # Feature map taken after block `feature_block` (-1 = last) of stage `feature_stage` (1-4). The
         # pretrained final norm is only applied to the full backbone (DINOv3 itself uses no norm on
@@ -69,13 +73,13 @@ class ConvNextSelfAttention(BagTransformer):
             freeze_module(module)
 
         C = self.backbone.embed_dims[feature_stage - 1]
-        self.adapter = build_adapter(adapter, C, adapter_dim, adapter_tokens, adapter_pe, grid_pool)
+        self.adapter = build_adapter(adapter, C, adapter_dim, adapter_tokens, adapter_pe)
         # Final norm of the pre-norm stack (as in ViT), before the classifier reads the tokens.
         self._build_head(adapter_dim, num_heads, ffn_dim, dropout, num_blocks, num_frames, num_classes,
                          aggregation_mode, num_query_tokens, final_norm=True,
                          tokens_per_frame=self.adapter.tokens_per_frame)
         print(
-            f"--- ConvNeXt Self-Attention [adapter={self.adapter_name} ({self.adapter.tokens_per_frame} token(s)/frame), "
+            f"--- ConvNeXt-{backbone_arch} Self-Attention [adapter={self.adapter_name} ({self.adapter.tokens_per_frame} token(s)/frame), "
             f"features from stage {feature_stage} "
             f"block {self.feature_block} ({C} ch), {self.L} features, "
             f"{self.num_blocks} block(s), aggregation={self.aggregation_mode}] weights initialized ---"

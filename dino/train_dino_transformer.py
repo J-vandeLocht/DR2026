@@ -5,13 +5,13 @@ import os
 import json
 import argparse
 
-from data.dataset import MILVideoDataset, MILVideoDatasetCluster
-from .utils import (make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, load_dino_backbone,
+from data.dataset import MILVideoDataset
+from .utils import (make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, load_dino_backbone, EXTRA_AUGS,
                     load_backbone_from_classifier, freeze_module)
 from misc.training import (seed_everything, make_run_dir, video_search_dirs, make_balanced_loaders,
                            make_optimizer, EpochLogger, SELECTION_METRICS)
 from transformer.adapters import ADAPTERS, build_adapter
-from transformer.model import BagTransformer
+from transformer.model import AGGREGATION_MODES, BagTransformer
 from transformer.utils import train_one_epoch_trans, validate_extended_trans
 
 
@@ -45,7 +45,6 @@ class DinoSelfAttention(BagTransformer):
             dense_tokens=None,
             adapter_dim=1024,
             adapter_pe=True,
-            grid_pool="avg",
             classifier_checkpoint_path=None,
             full_checkpoint_path=None,
     ):
@@ -63,7 +62,7 @@ class DinoSelfAttention(BagTransformer):
             dim, tokens_per_frame = self.backbone.embed_dim, 1
         else:
             self.adapter = build_adapter(dense_adapter, self.backbone.embed_dim, adapter_dim, dense_tokens,
-                                         adapter_pe, grid_pool)
+                                         adapter_pe)
             dim, tokens_per_frame = adapter_dim, self.adapter.tokens_per_frame
         self._build_head(dim, num_heads, ffn_dim, dropout, num_blocks, num_frames,
                          num_classes, aggregation_mode, num_query_tokens, use_pos_embedding=use_pos_embedding,
@@ -115,9 +114,9 @@ def train_self_attention(args):
                 f"{f'_{args.aggregation_mode}' if args.aggregation_mode != 'cls' else ''}"
                 f"{f'_dense-{args.dense_adapter}{args.dense_tokens or ""}' if args.dense_adapter else ''}"
                 f"{'_nope' if args.no_adapter_pe else ''}"
-                f"{f'_{args.grid_pool}pool' if args.grid_pool != 'avg' else ''}"
                 f"{'_noclf' if args.classifier_checkpoint is None else ''}"
-                f"{'_cluster' if args.cluster_sample else ''}"
+                f"{'_aug-' + '-'.join(args.extra_augs) if args.extra_augs else ''}"
+                f"{f'_bag{args.min_bag_size}' if args.min_bag_size else ''}"
                 f"{'_bagaug' if args.bag_consistent_augs else ''}"
                 f"{f'_sel-{args.selection_metric}' if args.selection_metric != 'default' else ''}")
     run_name, run_dir = make_run_dir("transformer", description, args.run_tag)
@@ -138,7 +137,6 @@ def train_self_attention(args):
         dense_tokens=args.dense_tokens,
         adapter_dim=args.adapter_dim,
         adapter_pe=not args.no_adapter_pe,
-        grid_pool=args.grid_pool,
         num_classes=1 if args.binary_classification else 5,
     )
     model = DinoSelfAttention(classifier_checkpoint_path=args.classifier_checkpoint,
@@ -150,20 +148,18 @@ def train_self_attention(args):
     # --- Data ---
     # --bag_consistent_augs: random augs drawn once per bag instead of once per frame.
     if args.bag_consistent_augs:
-        train_trans, train_bag_trans = make_bag_train_transforms_dino(args.img_size, args.complex_augs)
+        train_trans, train_bag_trans = make_bag_train_transforms_dino(args.img_size, args.complex_augs, args.extra_augs)
     else:
-        train_trans, train_bag_trans = make_train_transform_dino(args.img_size, args.complex_augs), None
+        train_trans, train_bag_trans = make_train_transform_dino(args.img_size, args.complex_augs, args.extra_augs), None
     val_trans = make_val_transform_dino(args.img_size, args.complex_augs)
     search_dir_paths = video_search_dirs(args.fused_dataset)
-    # Cluster sampling: one random frame per cluster for training, cluster medoids for validation.
-    dataset_cls = MILVideoDatasetCluster if args.cluster_sample else MILVideoDataset
-    train_ds = dataset_cls(os.path.join(args.split_path, args.train_json),
+    train_ds = MILVideoDataset(os.path.join(args.split_path, args.train_json),
                            num_frames=args.num_frames,
                            transform=train_trans,
                            bag_transform=train_bag_trans,
-                           random_segment_sample=args.cluster_sample or args.random_segment_sample,
-                           search_dir_paths=search_dir_paths)
-    val_ds = dataset_cls(os.path.join(args.split_path, args.val_json),
+                           random_segment_sample=args.random_segment_sample,
+                           search_dir_paths=search_dir_paths, min_bag_size=args.min_bag_size)
+    val_ds = MILVideoDataset(os.path.join(args.split_path, args.val_json),
                          num_frames=args.num_frames,
                          transform=val_trans,
                          search_dir_paths=search_dir_paths)
@@ -230,7 +226,7 @@ def build_parser():
                         help='Feed-forward hidden dim inside each transformer block.')
     parser.add_argument('--dropout', type=float, default=0.1,
                         help='Dropout used in the transformer blocks (attention output + FFN).')
-    parser.add_argument('--aggregation_mode', type=str, default='cls', choices=['cls', 'cls_mean', 'multi_token'],
+    parser.add_argument('--aggregation_mode', type=str, default='cls', choices=list(AGGREGATION_MODES),
                         help='How the classifier head reads the post-attention sequence (see DinoSelfAttention docstring).')
     parser.add_argument('--num_query_tokens', type=int, default=4,
                         help='Aggregator tokens for --aggregation_mode multi_token (ignored otherwise).')
@@ -238,14 +234,11 @@ def build_parser():
     parser.add_argument('--dense_adapter', type=str, default=None, choices=list(ADAPTERS),
                         help='Use the patch-token grid through this adapter (transformer/adapters.py) instead of CLS tokens.')
     parser.add_argument('--dense_tokens', type=int, default=None,
-                        help='Tokens per frame for --dense_adapter: queries for linear_attnpool (default 1), '
-                             'grid side for grid (default 2 -> 4 tokens).')
+                        help='Tokens per frame for --dense_adapter: queries for linear_attnpool (default 1).')
     parser.add_argument('--adapter_dim', type=int, default=1024,
                         help='--dense_adapter output dim = transformer width.')
     parser.add_argument('--no_adapter_pe', action='store_true',
                         help='Drop the 2D sin/cos PE in the linear_attnpool dense adapter (content-only pooling).')
-    parser.add_argument('--grid_pool', type=str, default='avg', choices=['avg', 'max'],
-                        help='Per-cell pooling of the grid dense adapter.')
     parser.add_argument('--backbone_lr_mult', type=float, default=0.1,
                         help='Backbone LR = --lr * this (only matters when --freeze_backbone is omitted).')
     parser.add_argument('--attn_entropy_weight', type=float, default=0.0,
@@ -259,8 +252,11 @@ def build_parser():
     parser.add_argument('--bag_consistent_augs', action='store_true',
                         help='Draw the random train augmentations once per bag (same for all frames) instead of per frame.')
     parser.add_argument('--fused_dataset', action='store_true')
-    parser.add_argument('--cluster_sample', action='store_true',
-                        help='Sample one frame per k-means cluster (clustering/cluster_frames.py) instead of by time; Paxos2025 only.')
+    parser.add_argument('--extra_augs', nargs='+', default=[], choices=EXTRA_AUGS,
+                        help='Extra train augs with --complex_augs (dino/utils.py): color (stronger jitter + gamma), '
+                             'affine (zoom/shift), degrade (blur/JPEG/noise, p 0.2 each).')
+    parser.add_argument('--min_bag_size', type=int, default=None,
+                        help='Train bags keep a random k in [min_bag_size, num_frames] of the sampled frames (val: all).')
     parser.add_argument('--binary_classification', action='store_true')
     parser.add_argument('--run_tag', type=str, default=None,
                         help='Optional short suffix appended to the run name (e.g. an experiment label).')
@@ -270,13 +266,15 @@ def build_parser():
 if __name__ == "__main__":
     parser = build_parser()
     args = parser.parse_args()
-    if args.cluster_sample and args.fused_dataset:
-        parser.error('--cluster_sample only has cluster files for Paxos2025, not --fused_dataset')
+    if args.extra_augs and not args.complex_augs:
+        parser.error('--extra_augs needs --complex_augs')
+    if args.min_bag_size is not None and not 1 <= args.min_bag_size <= args.num_frames:
+        parser.error('--min_bag_size must be in [1, --num_frames]')
+    if args.min_bag_size is not None and args.use_pos_embedding:
+        parser.error('--min_bag_size varies the bag length; --use_pos_embedding needs exactly --num_frames frames')
     if args.selection_metric == 'combined' and args.binary_classification:
         parser.error('--selection_metric combined (QWK + referable recall + acc) is 5-class only')
     if args.no_adapter_pe and args.dense_adapter != 'linear_attnpool':
         parser.error('--no_adapter_pe needs --dense_adapter linear_attnpool')
-    if args.grid_pool != 'avg' and args.dense_adapter != 'grid':
-        parser.error('--grid_pool max needs --dense_adapter grid')
 
     train_self_attention(args)

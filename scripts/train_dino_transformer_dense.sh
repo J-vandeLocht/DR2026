@@ -9,8 +9,8 @@
 # Baseline v2 with dense DINOv3 patch tokens instead of CLS: the 32x32 patch grid goes through an adapter
 # (transformer/adapters.py) giving K tokens per frame, and the bag transformer attends over all 32*K tokens.
 # Usage: sbatch train_dino_transformer_dense.sh [adapter] [dense_tokens] [extra args...]
-#   linear_attnpool 1 (default) | linear_attnpool 4 | grid 2 (quadrants, 4 tokens) | grid 4 (16 tokens) | linear_mean
-#   extra args e.g. --grid_pool max, --no_adapter_pe; CLF= (empty) starts from pretrained DINOv3 instead of the classifier.
+#   linear_attnpool 1 (default) | linear_attnpool 4 | linear_mean (grid adapter removed 2026-10-26)
+#   extra args e.g. --no_adapter_pe; CLF= (empty) starts from pretrained DINOv3 instead of the classifier.
 
 ADAPTER=${1:-linear_attnpool}
 TOKENS=${2:-1}

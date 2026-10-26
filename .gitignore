@@ -27,3 +27,4 @@ __pycache__/
 dino/logs/
 results/*.lock
 results/*.tmp
+**/notes

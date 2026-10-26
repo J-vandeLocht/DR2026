@@ -1,4 +1,0 @@
-sample_frames.py: one frame per video (50% of length), padded to square -> frames_to_annotate_larger
-annotation_app_video.py: annotate those frames -> annotations_video_frames_larger.csv (Paxos2025 + Paxos2020, 758 frames)
-segmentation_pipeline.py: 5-fold Unet++ (B4) ensemble -> models/, folds in splits.json
-segment_frames.py: crop a folder of frames with the ensemble

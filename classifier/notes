@@ -1,6 +1,0 @@
-models/ holds the DINO frame-classifier checkpoints (dino/train_dino_classifier.py); utils.py has its train/validate loops
-(train loop supports per-frame CDW, --distance_scale_weight).
-
-sample_frames.py / filter_frames.py: automatic frame selection (1-4 high-informativeness, well-spaced frames per video,
-then confidence filtering) as an alternative to the hand-picked frames. Works for binary, but for 5-class only a few
-frames carry the lesion info, so the hand-picked frames (data/2024_Paxos_Frames) are used instead. Unused, could be deleted.

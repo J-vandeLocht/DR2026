@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 def pos_enc_2d(H, W, D, device):
@@ -60,44 +59,21 @@ class LinearAttnPoolAdapter(nn.Module):
         return pooled.squeeze(1) if self.tokens_per_frame == 1 else pooled
 
 
-class GridPoolAdapter(nn.Module):
-    """1x1 conv projection -> LayerNorm -> average (or max) pooling into a fixed
-    grid×grid layout (2 = quadrants), one token per cell: B×grid²×D."""
-
-    def __init__(self, in_ch, dim, grid=2, pool="avg"):
-        super().__init__()
-        self.tokens_per_frame = grid * grid
-        self.grid = grid
-        self.pool = {"avg": F.adaptive_avg_pool2d, "max": F.adaptive_max_pool2d}[pool]
-        self.proj = nn.Conv2d(in_ch, dim, kernel_size=1)
-        self.norm = nn.LayerNorm(dim)
-
-    def forward(self, f):
-        t = self.norm(self.proj(f).permute(0, 2, 3, 1)).permute(0, 3, 1, 2)  # B×D×H×W
-        return self.pool(t, self.grid).flatten(2).transpose(1, 2)  # B×grid²×D
-
-
 ADAPTERS = {
     "linear_mean": LinearMeanAdapter,
     "linear_attnpool": LinearAttnPoolAdapter,
-    "grid": GridPoolAdapter,
 }
 
 
-def build_adapter(name, in_ch, dim, dense_tokens=None, adapter_pe=True, grid_pool="avg"):
-    """dense_tokens: number of queries for linear_attnpool, grid side for grid
-    (None = the adapter's default); linear_mean always gives one token.
-    adapter_pe: 2D sin/cos PE in linear_attnpool (the others have none).
-    grid_pool: 'avg' or 'max' pooling per grid cell (grid only)."""
+def build_adapter(name, in_ch, dim, dense_tokens=None, adapter_pe=True):
+    """dense_tokens: number of queries for linear_attnpool (None = 1);
+    linear_mean always gives one token.
+    adapter_pe: 2D sin/cos PE in linear_attnpool (linear_mean has none)."""
     if name not in ADAPTERS:
         raise ValueError(f"Unknown adapter '{name}', choose from {list(ADAPTERS)}")
     if not adapter_pe and name != "linear_attnpool":
         raise ValueError(f"adapter_pe=False only applies to linear_attnpool, not '{name}'")
-    if grid_pool != "avg" and name != "grid":
-        raise ValueError(f"grid_pool='{grid_pool}' only applies to grid, not '{name}'")
     kw = {} if adapter_pe else {"use_pe": False}
-    if grid_pool != "avg":
-        kw["pool"] = grid_pool
     if dense_tokens is not None and name != "linear_mean":
-        kw[{"linear_attnpool": "num_queries", "grid": "grid"}[name]] = dense_tokens
+        kw["num_queries"] = dense_tokens
     return ADAPTERS[name](in_ch, dim, **kw)

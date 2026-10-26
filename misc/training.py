@@ -6,6 +6,7 @@ import random
 import sys
 from datetime import datetime
 
+import cv2
 import numpy as np
 import torch
 import torch.optim as optim
@@ -23,6 +24,10 @@ def seed_everything(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    # torch's default of one thread per core (80) oversubscribes the CPU when several runs share the
+    # node (~3.5x slower). OMP_NUM_THREADS overrides the cap.
+    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", 16)))
+    cv2.setNumThreads(4)
 
 
 def make_run_dir(model_dir, description, run_tag=None):
@@ -41,7 +46,16 @@ def video_search_dirs(fused):
     return dirs
 
 
-def make_balanced_loaders(train_ds, val_ds, binary_classification, batch_size=1, require_all_classes=False):
+def loader_kwargs(num_workers):
+    """DataLoader worker settings shared by the training and eval loaders (decoding + augs overlap the GPU step).
+    Workers run torch single-threaded by default; re-setting thread counts in a forked worker can deadlock."""
+    if num_workers == 0:
+        return {}
+    return dict(num_workers=num_workers, persistent_workers=True)
+
+
+def make_balanced_loaders(train_ds, val_ds, binary_classification, batch_size=1, require_all_classes=False,
+                          num_workers=4):
     """Train loader oversampling by inverse class frequency (binary labels or 0-4 grades), plain val loader."""
     targets = np.array(train_ds.labels if binary_classification else train_ds.grades).astype(int)
     class_counts = np.bincount(targets)
@@ -52,8 +66,8 @@ def make_balanced_loaders(train_ds, val_ds, binary_classification, batch_size=1,
     sample_weights = torch.from_numpy((1.0 / class_counts)[targets]).double()
     sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, shuffle=False)
-    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, shuffle=False, **loader_kwargs(num_workers))
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, **loader_kwargs(num_workers))
     return train_loader, val_loader
 
 

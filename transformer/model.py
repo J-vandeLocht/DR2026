@@ -8,7 +8,18 @@ import torch.nn as nn
 from dino.utils import make_mlp_head
 
 
-AGGREGATION_MODES = ("cls", "cls_mean", "multi_token")
+AGGREGATION_MODES = ("cls", "cls_mean", "multi_token", "sparse_pool")
+
+
+def sparsemax(z, dim=-1):
+    """Sparsemax (Martins & Astudillo 2016): Euclidean projection onto the simplex, exact zeros for low scores."""
+    z_sorted, _ = z.sort(dim=dim, descending=True)
+    k = torch.arange(1, z.size(dim) + 1, device=z.device, dtype=z.dtype)
+    k = k.view([-1 if d == (dim % z.dim()) else 1 for d in range(z.dim())])
+    cssv = z_sorted.cumsum(dim) - 1
+    k_z = (z_sorted - cssv / k > 0).sum(dim=dim, keepdim=True)
+    tau = cssv.gather(dim, k_z - 1) / k_z.to(z.dtype)
+    return torch.clamp(z - tau, min=0)
 
 
 class TransformerBlock(nn.Module):
@@ -53,6 +64,9 @@ class BagTransformer(nn.Module):
     - "cls" (default): only the final CLS token.
     - "cls_mean": cat(CLS token, mean-pooled frame tokens).
     - "multi_token": num_query_tokens learnable tokens, concatenated.
+    - "sparse_pool": sparsemax attention pooling over the frame (region)
+      tokens after the blocks (exact zeros for ignored frames); the query
+      token still takes part in the blocks but isn't read.
     frame_weights (used for attention viz and the entropy/distance-scale
     loss terms) is the query token(s)' attention to the frames, averaged
     over query tokens and summed over each frame's region tokens."""
@@ -85,7 +99,14 @@ class BagTransformer(nn.Module):
         ])
         self.final_norm = nn.LayerNorm(dim) if final_norm else None
 
-        classifier_in_dim = {"cls": dim, "cls_mean": 2 * dim, "multi_token": self.num_query_tokens * dim}
+        # sparse_pool: per-token score, zero-initialized so pooling starts uniform.
+        self.pool_score = nn.Linear(dim, 1) if aggregation_mode == "sparse_pool" else None
+        if self.pool_score is not None:
+            nn.init.zeros_(self.pool_score.weight)
+            nn.init.zeros_(self.pool_score.bias)
+
+        classifier_in_dim = {"cls": dim, "cls_mean": 2 * dim, "multi_token": self.num_query_tokens * dim,
+                             "sparse_pool": dim}
         self.classifier = make_mlp_head(classifier_in_dim[aggregation_mode], num_classes)
 
         for block in self.blocks:
@@ -151,6 +172,14 @@ class BagTransformer(nn.Module):
         if os.path.exists(config_path):
             with open(config_path, "r") as f:
                 config = json.load(f)
+            # Removed options (2026-10-23); runs that had them enabled can't be rebuilt.
+            for key in ("frame_prior", "alternating_attention"):
+                if config.pop(key, False):
+                    raise ValueError(f"{run_dir} was trained with the removed option {key}.")
+            # grid adapter / grid_pool removed 2026-10-26.
+            config.pop("grid_pool", None)
+            if "grid" in (config.get("adapter"), config.get("dense_adapter")):
+                raise ValueError(f"{run_dir} was trained with the removed grid adapter.")
         else:
             config = cls.config_from_state_dict(torch.load(ckpt, map_location="cpu"))
         return cls(full_checkpoint_path=ckpt, **config)
@@ -187,7 +216,12 @@ class BagTransformer(nn.Module):
         query_out = x[:, :N, :]   # [1, N, L]
         frame_out = x[:, N:, :]   # [1, num_frames, L]
 
-        if self.aggregation_mode == "cls_mean":
+        pool_weights = None
+        if self.aggregation_mode == "sparse_pool":
+            scores = self.pool_score(frame_out).squeeze(-1).float()  # [1, num_frames*K]
+            pool_weights = sparsemax(scores, dim=-1)  # [1, num_frames*K], sums to 1
+            bag_representation = (pool_weights.unsqueeze(-1).to(frame_out.dtype) * frame_out).sum(dim=1)  # [1, L]
+        elif self.aggregation_mode == "cls_mean":
             bag_representation = torch.cat([query_out[:, 0, :], frame_out.mean(dim=1)], dim=-1)  # [1, 2L]
         elif self.aggregation_mode == "multi_token":
             bag_representation = query_out.reshape(query_out.size(0), -1)  # [1, N*L]
@@ -198,7 +232,8 @@ class BagTransformer(nn.Module):
 
         # Query token(s)' attention to the frame (region) tokens, averaged
         # over query tokens, normalized to sum to 1, then summed per frame.
-        token_weights = attn_weights[0, :N, N:].mean(dim=0)  # [num_frames*K]
+        # sparse_pool: the pooling weights themselves.
+        token_weights = pool_weights[0] if pool_weights is not None else attn_weights[0, :N, N:].mean(dim=0)  # [num_frames*K]
         region_weights = (token_weights / (token_weights.sum() + 1e-12)).view(T, -1)  # [num_frames, K]
         frame_weights = region_weights.sum(dim=1)  # [num_frames]
 

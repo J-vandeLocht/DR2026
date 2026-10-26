@@ -8,11 +8,12 @@ from torchvision.transforms import v2
 
 DINO_REPO = "dino/dinov3"
 DINO_WEIGHTS = "dino/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
+DINO_WEIGHTS_SAT = "dino/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"  # same architecture, satellite pretraining
 
 
-def load_dino_backbone():
+def load_dino_backbone(weights=DINO_WEIGHTS):
     """Pretrained DINOv3 ViT-L/16 from the local hub clone."""
-    return torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", weights=DINO_WEIGHTS)
+    return torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", weights=weights)
 
 
 def load_backbone_from_classifier(backbone, path):
@@ -22,6 +23,9 @@ def load_backbone_from_classifier(backbone, path):
     backbone_state = {k[len("backbone."):]: v for k, v in state_dict.items() if k.startswith("backbone.")}
     if not backbone_state:
         raise ValueError(f"No keys starting with 'backbone.' found in {path}. Is this really a DinoClassifier checkpoint?")
+    if getattr(backbone, "local_cls_norm", None) is None:
+        # SAT-493M backbones carry a local-crop CLS norm that is only used in multi-crop training, never in our forward.
+        backbone_state = {k: v for k, v in backbone_state.items() if not k.startswith("local_cls_norm.")}
     backbone.load_state_dict(backbone_state, strict=True)
     print(f"Backbone weights loaded strictly ({len(backbone_state)} tensors).")
 
@@ -88,20 +92,60 @@ def apply_clahe_cv2_dino(img):
     return torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
 
 
-def make_train_transform_dino(img_size, complex_augs):
+EXTRA_AUGS = ("color", "affine", "degrade")
+
+
+class RandomGamma(nn.Module):
+    """Gamma correction with a random gamma from `gamma_range`, applied with probability p (float images in [0, 1])."""
+
+    def __init__(self, gamma_range=(0.7, 1.5), p=0.5):
+        super().__init__()
+        self.gamma_range, self.p = gamma_range, p
+
+    def forward(self, img):
+        if torch.rand(1).item() >= self.p:
+            return img
+        return v2.functional.adjust_gamma(img, torch.empty(1).uniform_(*self.gamma_range).item())
+
+
+def _random_augs(extra_augs):
+    """Geometric + photometric train augs (after CLAHE). extra_augs: 'affine' adds zoom/shift to the rotation,
+    'color' widens the jitter (+ saturation/hue) and adds random gamma; contrast stays at 0.2, since stronger
+    contrast jitter lifts the black crop border to visible gray."""
+    rotation = (v2.RandomAffine(degrees=180, translate=(0.05, 0.05), scale=(0.9, 1.1)) if "affine" in extra_augs
+                else v2.RandomRotation(180))
+    if "color" in extra_augs:
+        color = [v2.ColorJitter(brightness=0.3, contrast=0.2, saturation=0.2, hue=0.02), RandomGamma((0.7, 1.5), p=0.5)]
+    else:
+        color = [v2.ColorJitter(brightness=0.1, contrast=0.1)]
+    return [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip(), rotation, *color]
+
+
+def _degrade_augs(extra_augs):
+    """'degrade': per-frame JPEG artefacts (uint8, before CLAHE), blur and noise (float), each with p 0.2."""
+    if "degrade" not in extra_augs:
+        return [], [], []
+    return ([v2.RandomApply([v2.JPEG((40, 90))], p=0.2)],
+            [v2.RandomApply([v2.GaussianBlur(9, sigma=(0.1, 1.5))], p=0.2)],
+            [v2.RandomApply([v2.GaussianNoise(sigma=0.03)], p=0.2)])
+
+
+def make_train_transform_dino(img_size, complex_augs, extra_augs=()):
+    """extra_augs (subset of EXTRA_AUGS) only applies with complex_augs."""
     if complex_augs:
+        jpeg, blur, noise = _degrade_augs(extra_augs)
         return v2.Compose([
             v2.ToImage(),
             v2.Resize((img_size, img_size), antialias=True),
+            *jpeg,
 
             v2.Lambda(apply_clahe_cv2_dino),
 
-            v2.RandomHorizontalFlip(),
-            v2.RandomVerticalFlip(),
-            v2.RandomRotation(180),
-            v2.ColorJitter(brightness=0.1, contrast=0.1),
+            *_random_augs(extra_augs),
+            *blur,
 
             v2.ToDtype(torch.float32, scale=True),
+            *noise,
 
             v2.Normalize(
                 mean=(0.485, 0.456, 0.406),
@@ -115,16 +159,17 @@ def make_train_transform_dino(img_size, complex_augs):
                            ])
 
 
-def make_bag_train_transforms_dino(img_size, complex_augs):
-    """Train augs split for frame bags: (per-frame deterministic part, part applied once to the stacked
-    [T, C, H, W] bag), so every frame of a bag gets the same flip/rotation/jitter."""
+def make_bag_train_transforms_dino(img_size, complex_augs, extra_augs=()):
+    """Train augs split for frame bags: (per-frame part, part applied once to the stacked [T, C, H, W] bag),
+    so every frame of a bag gets the same flip/rotation/jitter; 'degrade' stays per frame."""
     frame = [v2.ToImage(), v2.Resize((img_size, img_size), antialias=True)]
     bag = []
+    noise = []
     if complex_augs:
-        frame.append(v2.Lambda(apply_clahe_cv2_dino))
-        bag += [v2.RandomHorizontalFlip(), v2.RandomVerticalFlip(), v2.RandomRotation(180),
-                v2.ColorJitter(brightness=0.1, contrast=0.1)]
-    frame.append(v2.ToDtype(torch.float32, scale=True))
+        jpeg, blur, noise = _degrade_augs(extra_augs)
+        frame += [*jpeg, v2.Lambda(apply_clahe_cv2_dino), *blur]
+        bag += _random_augs(extra_augs)
+    frame += [v2.ToDtype(torch.float32, scale=True), *noise]
     bag.append(v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
     return v2.Compose(frame), v2.Compose(bag)
 

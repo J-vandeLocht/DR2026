@@ -6,6 +6,7 @@ import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
+from misc.training import loader_kwargs
 
 from data.dataset import MILVideoDataset
 from dino.utils import make_val_transform_dino
@@ -132,7 +133,7 @@ def main(args):
                     break
             val_ds.data = subset
 
-        val_loader = DataLoader(val_ds, batch_size=1, shuffle=False)
+        val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, **loader_kwargs(4))
 
         run_name = f"split_{split}"
         print(f"\n>>> Analyzing Attention for Run: {run_name}")

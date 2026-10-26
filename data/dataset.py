@@ -7,6 +7,7 @@ import numpy as np
 import json
 import os
 import re
+from collections import Counter
 
 
 class FrameDataset(Dataset):
@@ -60,8 +61,10 @@ class FrameDataset(Dataset):
 
 class MILVideoDataset(Dataset):
     def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False, search_dir_paths=None,
-                 bag_transform=None):
-        """`transform` is applied per frame; optional `bag_transform` once to the stacked [T, C, H, W] bag."""
+                 bag_transform=None, min_bag_size=None):
+        """`transform` is applied per frame; optional `bag_transform` once to the stacked [T, C, H, W] bag.
+        min_bag_size (train only): each bag keeps a random sorted subset of k ~ U[min_bag_size, num_frames] sampled frames."""
+        self.min_bag_size = min_bag_size
         with open(json_path, 'r') as f:
             self.label_map = json.load(f)
 
@@ -176,102 +179,55 @@ class MILVideoDataset(Dataset):
             raise RuntimeError(f"Video {path} has 0 frames or unreadable metadata.")
 
         target_indices = self._sample_indices(item, total_frames)
+        if self.min_bag_size is not None:
+            k = np.random.randint(self.min_bag_size, self.num_frames + 1)
+            keep = np.sort(np.random.choice(len(target_indices), k, replace=False))
+            target_indices = [target_indices[j] for j in keep]
+        bag_size = len(target_indices)
+        target_counts = Counter(target_indices)
 
+        # Only sampled frames are retrieved; grab() just advances past the others (~32 of ~870 frames are used).
+        # Padding below therefore repeats the last *sampled* frame that could be read.
         last_valid_frame = None
 
         for i in range(total_frames):
+            if i not in target_counts:
+                if not cap.grab():
+                    break
+                continue
             ret, frame = cap.read()
             if not ret:
                 break
 
             last_valid_frame = frame
-            times_to_add = target_indices.count(i)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
 
-            if times_to_add > 0:
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = Image.fromarray(frame_rgb)
+            if self.transform:
+                img = self.transform(img)
 
-                if self.transform:
-                    img = self.transform(img)
+            for _ in range(target_counts[i]):
+                frames.append(img)
 
-                for _ in range(times_to_add):
-                    frames.append(img)
-
-            if len(frames) == self.num_frames:
+            if len(frames) == bag_size:
                 break
 
         cap.release()
 
-        while len(frames) < self.num_frames and last_valid_frame is not None:
+        while len(frames) < bag_size and last_valid_frame is not None:
             frame_rgb = cv2.cvtColor(last_valid_frame, cv2.COLOR_BGR2RGB)
             img = Image.fromarray(frame_rgb)
             if self.transform:
                 img = self.transform(img)
             frames.append(img)
 
-        if len(frames) != self.num_frames:
+        if len(frames) != bag_size:
             raise RuntimeError(
-                f"Critical failure: Expected {self.num_frames} frames from {path}, but ended up with {len(frames)}.")
+                f"Critical failure: Expected {bag_size} frames from {path}, but ended up with {len(frames)}.")
 
         bag = torch.stack(frames)
-        return self.bag_transform(bag) if self.bag_transform else bag
-
-
-class MILVideoDatasetCluster(MILVideoDataset):
-    """
-    MILVideoDataset that samples one frame per k-means cluster (see clustering/cluster_frames.py)
-    instead of by time: random_segment_sample=True draws a random member per cluster (train),
-    otherwise each cluster's medoid is used (val). Cluster JSONs are matched like the videos,
-    from `cluster_dir_paths` (default: `frame_clusters/clusters` sibling of each `cleaned_videos`).
-    """
-
-    def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False,
-                 search_dir_paths=None, cluster_dir_paths=None, bag_transform=None):
-        super().__init__(json_path, num_frames=num_frames, transform=transform,
-                         random_segment_sample=random_segment_sample, search_dir_paths=search_dir_paths,
-                         bag_transform=bag_transform)
-
-        if search_dir_paths is None:
-            search_dir_paths = ["data/ensemble_results/cleaned_videos"]
-        if cluster_dir_paths is None:
-            cluster_dir_paths = [p.replace("cleaned_videos", "frame_clusters/clusters") for p in search_dir_paths]
-
-        all_cluster_paths = []
-        for cluster_dir_path in cluster_dir_paths:
-            cluster_dir = Path(cluster_dir_path)
-            if cluster_dir.exists():
-                all_cluster_paths.extend(cluster_dir.glob("*.json"))
-
-        kept, missing_cluster_count = [], 0
-        for item in self.data:
-            video_stem = Path(item['path']).stem
-            matched = next((p for p in all_cluster_paths if p.stem == video_stem), None)
-            if matched is None:
-                print(f"Missing clusters: {item['vid_name']}")
-                missing_cluster_count += 1
-                continue
-            with open(matched, 'r') as f:
-                cluster_info = json.load(f)
-            item['clusters'] = cluster_info['clusters']
-            item['medoids'] = cluster_info['medoids']
-            kept.append(item)
-        self.data = kept
-
-        print(f"{len(self.data)} videos have cluster files.")
-        if missing_cluster_count > 0:
-            print(f"Skipped {missing_cluster_count} videos (cluster file not found).")
-
-    def _sample_indices(self, item, total_frames):
-        if self.random_segment_sample:
-            picks = [int(np.random.choice(members)) for members in item['clusters']]
-        else:
-            picks = list(item['medoids'])
-
-        # Fewer non-empty clusters than num_frames: top up by cycling through the picks.
-        target_indices = [picks[i % len(picks)] for i in range(self.num_frames)]
-        target_indices = [min(i, total_frames - 1) for i in target_indices]
-        # Sorted so the sequential OpenCV reader works properly
-        return sorted(target_indices)
+        bag = self.bag_transform(bag) if self.bag_transform else bag
+        return bag
 
 
 class KaggleDRDataset(Dataset):

@@ -6,6 +6,7 @@ from PIL import Image
 from tqdm import tqdm
 import argparse
 from torch.utils.data import Dataset, DataLoader
+from misc.training import loader_kwargs
 
 from data.dataset import MILVideoDataset
 from dino.utils import make_val_transform_dino
@@ -274,7 +275,7 @@ def main(args):
             transform=val_trans,
             search_dir_paths=[args.videos_path],
         )
-        loaders = {"video": DataLoader(val_ds, batch_size=1, shuffle=False)}
+        loaders = {"video": DataLoader(val_ds, batch_size=1, shuffle=False, **loader_kwargs(4))}
         vid_names = [sample['vid_name'] for sample in val_ds.data]
 
         # Frame split (only if a frame-based model is requested)
@@ -343,4 +344,4 @@ if __name__ == "__main__":
     parser.add_argument('--binary_classification', action='store_true')
 
     args = parser.parse_args()
-    main(args)
+    main(args)

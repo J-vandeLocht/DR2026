@@ -1,3 +1,0 @@
-Only notes left here. MIL training is dino/train_dino_mil.py (binary gated-attention MIL, optional classifier init),
-its loops are in transformer/utils.py, eval in dino/vis_video_results.py. Old MIL checkpoints/vis scripts are gone
-(see git history). EfficientNet scripts only in git history.

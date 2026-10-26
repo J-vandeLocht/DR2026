@@ -7,15 +7,15 @@ import argparse
 from data.dataset import FrameDataset
 from classifier.utils import validate_classifier, train_one_epoch_classifier
 from dino.utils import (make_train_transform_dino, make_val_transform_dino, load_dino_backbone, freeze_module,
-                        make_mlp_head)
+                        make_mlp_head, DINO_WEIGHTS, DINO_WEIGHTS_SAT)
 from misc.training import seed_everything, make_run_dir, make_balanced_loaders, make_optimizer, EpochLogger
 
 
 class DinoClassifier(nn.Module):
-    def __init__(self, freeze_backbone=True, num_classes=5):
+    def __init__(self, freeze_backbone=True, num_classes=5, weights=DINO_WEIGHTS):
         super().__init__()
 
-        self.backbone = load_dino_backbone()
+        self.backbone = load_dino_backbone(weights)
         self.embed_dim = self.backbone.embed_dim
 
         if freeze_backbone:
@@ -27,7 +27,8 @@ class DinoClassifier(nn.Module):
     def from_checkpoint(cls, path, freeze_backbone=True):
         """Rebuild from a best_model.pth, reading num_classes (1 = binary, 5) off the head."""
         state_dict = torch.load(path, map_location="cpu")
-        model = cls(freeze_backbone=freeze_backbone, num_classes=state_dict["head.5.weight"].shape[0])
+        weights = DINO_WEIGHTS_SAT if "backbone.local_cls_norm.weight" in state_dict else DINO_WEIGHTS
+        model = cls(freeze_backbone=freeze_backbone, num_classes=state_dict["head.5.weight"].shape[0], weights=weights)
         model.load_state_dict(state_dict, strict=True)
         return model
 
@@ -50,12 +51,12 @@ def train_classifier(args):
     if args.weight_path:
         # Pretrained weights are a 5-class DinoClassifier; swap in a fresh head for binary.
         print(f"Loading pretrained weights from: {args.weight_path}")
-        model = DinoClassifier(freeze_backbone=args.freeze_backbone, num_classes=5)
+        model = DinoClassifier(freeze_backbone=args.freeze_backbone, num_classes=5, weights=args.backbone_weights)
         model.load_state_dict(torch.load(args.weight_path, map_location="cpu"))
         if num_classes != 5:
             model.head = make_mlp_head(model.embed_dim, num_classes)
     else:
-        model = DinoClassifier(freeze_backbone=args.freeze_backbone, num_classes=num_classes)
+        model = DinoClassifier(freeze_backbone=args.freeze_backbone, num_classes=num_classes, weights=args.backbone_weights)
     model.backbone.grad_checkpointing = args.grad_checkpointing
     model = model.to(device)
 
@@ -97,6 +98,8 @@ if __name__ == "__main__":
     parser.add_argument('--weight_path', type=str, default=None,
                         help='5-class DinoClassifier checkpoint to initialize from (head is replaced for --binary_classification).')
     parser.add_argument('--freeze_backbone', action='store_true')
+    parser.add_argument('--backbone_weights', type=str, default=DINO_WEIGHTS,
+                        help='Pretrained DINOv3 ViT-L/16 weights (e.g. dino.utils.DINO_WEIGHTS_SAT, satellite pretraining).')
     parser.add_argument('--binary_classification', action='store_true')
 
     parser.add_argument('--epochs', type=int, default=15)
