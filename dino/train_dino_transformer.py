@@ -214,8 +214,8 @@ def build_parser():
                         help='Final LR of the cosine schedule (only for --lr_schedule cosine).')
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=1e-5)
-    parser.add_argument('--optimizer', type=str, default='adam', choices=['adam', 'adamw'])
-    parser.add_argument('--weight_decay', type=float, default=0.01,
+    parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'adamw'])
+    parser.add_argument('--weight_decay', type=float, default=0.001,
                         help='Only used with --optimizer adamw (decoupled weight decay).')
     parser.add_argument('--complex_augs', action='store_true')
     parser.add_argument('--use_pos_embedding', action='store_true')

@@ -450,7 +450,9 @@ def main(args):
                     continue
                 out_dir = os.path.join(args.output_dir, "binary", name.replace(' ', '_'))
                 os.makedirs(out_dir, exist_ok=True)
-                row, wrong = analyse_binary(df, split_name, info["score_col"], name, out_dir, args.txt_dir)
+                # e.g. Clf on videos without hand-picked frames
+                row, wrong = analyse_binary(df.dropna(subset=[info["score_col"]]), split_name, info["score_col"], name,
+                                            out_dir, args.txt_dir)
             else:
                 if "grade" not in df.columns:
                     print(f"Skipping multi-class model '{name}' in {split_name}: no 'grade' column.")

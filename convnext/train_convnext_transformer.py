@@ -81,7 +81,7 @@ def train_convnext_transformer(args):
 
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     # Head + adapter at lr (param_groups[0], used for LR logging), backbone at lr * backbone_lr_mult.
-    optimizer = make_optimizer(model, args.lr, args.backbone_lr_mult)
+    optimizer = make_optimizer(model, args.lr, args.backbone_lr_mult, args.optimizer, args.weight_decay)
     # Cosine decay per epoch from the starting LRs down to min_lr (applies to both param groups).
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.min_lr)
     scaler = torch.amp.GradScaler("cuda", enabled=(device.type == "cuda"))
@@ -121,6 +121,9 @@ if __name__ == "__main__":
                         help='Final LR of the cosine schedule (reached after --epochs).')
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--lr', type=float, default=1e-5)
+    parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'adamw'])
+    parser.add_argument('--weight_decay', type=float, default=0.001,
+                        help='Only used with --optimizer adamw (decoupled weight decay).')
     parser.add_argument('--backbone_lr_mult', type=float, default=0.1,
                         help='Backbone LR = --lr * this (only matters when --freeze_backbone is omitted).')
     parser.add_argument('--complex_augs', action='store_true')

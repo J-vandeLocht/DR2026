@@ -28,3 +28,4 @@ dino/logs/
 results/*.lock
 results/*.tmp
 **/notes
+data/attention_errors_cnx/

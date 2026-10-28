@@ -1,15 +1,40 @@
+import argparse
 import json
 import os
+import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from collections import Counter
-from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import StratifiedKFold, StratifiedGroupKFold
+
+GRADING_SUMMARY = "data/DR_Grading_Summary_v3.csv"
 
 
-def load_dataset(name, matching_path, clip_labels_path):
+def make_patient_id_fn(summary_path=GRADING_SUMMARY):
+    """Clip id -> patient id, so both eyes (and repeat videos) of a patient share a fold.
+    Paxos2025 IMG videos: Eye_ID of the grading sheet (OD/OS share it, matched by the IMG number);
+    R-series (2025) and Paxos2020 ids: the letter+number prefix (R027L/R027R/R027L2 -> R027, B005L -> B005)."""
+    sheet = pd.read_csv(summary_path)
+    img_to_patient = dict(zip(sheet["File_Name"].astype(str).str.strip(), sheet["Eye_ID"]))
+
+    def patient_id(cid):
+        m = re.search(r"IMG_(\d+)", cid)
+        if m and m.group(1) in img_to_patient:
+            return f"eye_id_{img_to_patient[m.group(1)]}"
+        m = re.match(r"^([A-Z]\d+)[LR]", cid)
+        if m:
+            return m.group(1)
+        print(f"WARNING: no patient id for {cid}, using the clip as its own group")
+        return cid
+
+    return patient_id
+
+
+def load_dataset(name, matching_path, clip_labels_path, group_fn=None):
     """Load one dataset (matches + clip_labels) and return synced,
-    labeled arrays ready for StratifiedKFold, plus the raw dicts."""
+    labeled arrays ready for StratifiedKFold, plus the raw dicts.
+    group_fn: clip id -> group (patient) id for StratifiedGroupKFold."""
     with open(matching_path, "r") as f:
         data = json.load(f)
         matches = data.get("matches", data)
@@ -32,6 +57,7 @@ def load_dataset(name, matching_path, clip_labels_path):
         "clip_labels": clip_labels,
         "ids": np.array(labeled_clip_ids),
         "labels": np.array(stratify_labels),
+        "groups": np.array([group_fn(c) for c in labeled_clip_ids]) if group_fn else None,
     }
 
 
@@ -53,22 +79,31 @@ def create_kfold_splits(
     Each dataset is stratified-K-folded independently (by grade), then
     fold i of every dataset is merged together into the final fold i.
     This keeps both the grade distribution AND the dataset-origin ratio
-    stable across folds.
+    stable across folds. A dataset config with a "group_fn" (clip id -> patient id)
+    is folded with StratifiedGroupKFold, so no patient is in both train and val.
     """
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
     # 1. Load every dataset
     datasets = [
-        load_dataset(cfg["name"], cfg["matching_path"], cfg["clip_labels_path"])
+        load_dataset(cfg["name"], cfg["matching_path"], cfg["clip_labels_path"], cfg.get("group_fn"))
         for cfg in dataset_configs
     ]
 
     # 2. Compute independent StratifiedKFold splits per dataset
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
+    sgkf = StratifiedGroupKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
     per_dataset_folds = []  # list (per dataset) of list (per fold) of (train_idx, val_idx)
     for ds in datasets:
-        folds = list(skf.split(ds["ids"], ds["labels"]))
+        if ds["groups"] is None:
+            folds = list(skf.split(ds["ids"], ds["labels"]))
+        else:
+            folds = list(sgkf.split(ds["ids"], ds["labels"], ds["groups"]))
+            for i, (tr, va) in enumerate(folds):
+                shared = set(ds["groups"][tr]) & set(ds["groups"][va])
+                assert not shared, f"{ds['name']} fold {i + 1}: patients in train and val: {sorted(shared)[:5]}"
+            print(f"{ds['name']}: {len(set(ds['groups']))} patients, {len(ds['ids'])} clips, no train/val patient overlap")
         per_dataset_folds.append(folds)
 
     stats_log = []
@@ -202,20 +237,24 @@ def generate_plots(df, output_dir, dataset_names):
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--datasets', nargs='+', default=["2025", "2020"], choices=["2025", "2020"])
+    parser.add_argument('--output_dir', type=str, default="data/stratified_splits")
+    parser.add_argument('--group_by_patient', action='store_true',
+                        help='Patient-level folds (StratifiedGroupKFold), see make_patient_id_fn.')
+    args = parser.parse_args()
+    group_fn = make_patient_id_fn() if args.group_by_patient else None
     create_kfold_splits(
         dataset_configs=[
             {
-                "name": "2025",
-                "matching_path": "data/matching_results_2025.json",
-                "clip_labels_path": "data/clip_labels_2025.json",
-            },
-            {
-                "name": "2020",
-                "matching_path": "data/matching_results_2020.json",
-                "clip_labels_path": "data/clip_labels_2020.json",
-            },
+                "name": name,
+                "matching_path": f"data/matching_results_{name}.json",
+                "clip_labels_path": f"data/clip_labels_{name}.json",
+                "group_fn": group_fn,
+            }
+            for name in args.datasets
         ],
         n_splits=5,
-        output_dir="data/stratified_splits",
+        output_dir=args.output_dir,
         random_seed=42,
     )

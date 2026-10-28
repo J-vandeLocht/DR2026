@@ -69,7 +69,7 @@ def train_classifier(args):
                                                      batch_size=args.batch_size, require_all_classes=True)
 
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
-    optimizer = make_optimizer(model, args.lr)
+    optimizer = make_optimizer(model, args.lr, optimizer=args.optimizer, weight_decay=args.weight_decay)
     if args.lr_schedule == 'cosine':
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=args.min_lr)
     else:
@@ -114,6 +114,9 @@ if __name__ == "__main__":
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--batch_size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'adamw'])
+    parser.add_argument('--weight_decay', type=float, default=0.001,
+                        help='Only used with --optimizer adamw (decoupled weight decay).')
     parser.add_argument('--complex_augs', action='store_true')
     parser.add_argument('--grad_checkpointing', action='store_true',
                         help='Per-block gradient checkpointing in the backbone (unfrozen bs 16 at 512px: ~7GB instead of OOM on 24GB).')

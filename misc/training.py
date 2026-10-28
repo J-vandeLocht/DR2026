@@ -71,8 +71,8 @@ def make_balanced_loaders(train_ds, val_ds, binary_classification, batch_size=1,
     return train_loader, val_loader
 
 
-def make_optimizer(model, lr, backbone_lr_mult=None, optimizer="adam", weight_decay=0.01):
-    """Adam/AdamW over the trainable params. With backbone_lr_mult, the backbone gets
+def make_optimizer(model, lr, backbone_lr_mult=None, optimizer="adamw", weight_decay=0.001):
+    """AdamW (default since 2026-10-26; Adam before) over the trainable params. With backbone_lr_mult, the backbone gets
     its own group at lr * backbone_lr_mult; param_groups[0] is always the head group."""
     if backbone_lr_mult is None:
         param_groups = [{"params": [p for p in model.parameters() if p.requires_grad], "lr": lr}]
@@ -126,14 +126,15 @@ def selection_score(m, binary_classification, selection="default"):
 
 
 class EpochLogger:
-    """Per-epoch TensorBoard logging, confusion matrix, console line and best-checkpoint
-    saving (selection metric: see selection_score)."""
+    """Per-epoch TensorBoard logging, confusion matrix, console line, best-checkpoint
+    saving (selection metric: see selection_score) and the last epoch's weights (best_x.pth -> last_x.pth)."""
 
     def __init__(self, run_name, run_dir, args, binary_classification, checkpoint_name, cm_to_tensorboard=False,
                  selection="default"):
         self.run_dir = run_dir
         self.binary = binary_classification
         self.checkpoint_path = os.path.join(run_dir, checkpoint_name)
+        self.last_checkpoint_path = os.path.join(run_dir, f"last_{checkpoint_name.removeprefix('best_')}")
         self.cm_to_tensorboard = cm_to_tensorboard
         self.selection = selection
         self.class_names = ['non-referable', 'referable'] if binary_classification else ['0', '1', '2', '3', '4']
@@ -167,6 +168,7 @@ class EpochLogger:
             self.best_epoch = epoch
             torch.save(model.state_dict(), self.checkpoint_path)
             w.add_scalar('Meta/Best_Selection_Metric', selection_metric, epoch)
+        torch.save(model.state_dict(), self.last_checkpoint_path)
 
         current_lr = optimizer.param_groups[0]['lr']
         w.add_scalar('Meta/Learning_Rate', current_lr, epoch)
