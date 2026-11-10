@@ -8,7 +8,8 @@ from data.dataset import FrameDataset
 from classifier.utils import validate_classifier, train_one_epoch_classifier
 from dino.utils import (make_train_transform_dino, make_val_transform_dino, load_dino_backbone, freeze_module,
                         make_mlp_head, DINO_WEIGHTS, DINO_WEIGHTS_SAT)
-from misc.training import seed_everything, make_run_dir, make_balanced_loaders, make_optimizer, EpochLogger
+from misc.training import (seed_everything, make_run_dir, make_balanced_loaders, make_optimizer, EpochLogger,
+                           make_criterion, add_balancing_args)
 
 
 class DinoClassifier(nn.Module):
@@ -63,11 +64,16 @@ def train_classifier(args):
     train_trans = make_train_transform_dino(args.img_size, args.complex_augs)
     val_trans = make_val_transform_dino(args.img_size, args.complex_augs)
     frame_dirs = ["data/2024_Paxos_Frames/cropped_matched_frames"]
-    train_dataset = FrameDataset(os.path.join(args.split_path, args.train_json), frame_dirs, transform=train_trans)
-    val_dataset = FrameDataset(os.path.join(args.split_path, args.val_json), frame_dirs, transform=val_trans)
+    train_dataset = FrameDataset(os.path.join(args.split_path, args.train_json), frame_dirs, transform=train_trans,
+                                 crop_borders=args.crop_borders)
+    val_dataset = FrameDataset(os.path.join(args.split_path, args.val_json), frame_dirs, transform=val_trans,
+                               crop_borders=args.crop_borders)
     train_loader, val_loader = make_balanced_loaders(train_dataset, val_dataset, args.binary_classification,
-                                                     batch_size=args.batch_size, require_all_classes=True)
+                                                     batch_size=args.batch_size, require_all_classes=True,
+                                                     sampler_power=args.sampler_power)
 
+    # Class weights only in the training loss; validation loss stays unweighted.
+    train_criterion = make_criterion(train_dataset, args.binary_classification, args.class_weight_power).to(device)
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     optimizer = make_optimizer(model, args.lr, optimizer=args.optimizer, weight_decay=args.weight_decay)
     if args.lr_schedule == 'cosine':
@@ -79,7 +85,7 @@ def train_classifier(args):
                          cm_to_tensorboard=True)
     print(f"Start Training: {run_name}")
     for epoch in range(args.epochs):
-        t_loss = train_one_epoch_classifier(model, train_loader, criterion, optimizer, args.binary_classification,
+        t_loss = train_one_epoch_classifier(model, train_loader, train_criterion, optimizer, args.binary_classification,
                                             device, args.distance_scale_weight)
         m = validate_classifier(model, val_loader, criterion, args.binary_classification, device)
         scheduler.step()
@@ -122,6 +128,7 @@ if __name__ == "__main__":
                         help='Per-block gradient checkpointing in the backbone (unfrozen bs 16 at 512px: ~7GB instead of OOM on 24GB).')
     parser.add_argument('--run_tag', type=str, default=None,
                         help='Optional short suffix appended to the run name (e.g. an experiment label).')
+    add_balancing_args(parser)
 
     args = parser.parse_args()
 

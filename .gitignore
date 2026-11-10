@@ -29,3 +29,4 @@ results/*.lock
 results/*.tmp
 **/notes
 data/attention_errors_cnx/
+data/multi_eval_paxos2025_binary/

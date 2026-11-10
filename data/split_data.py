@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import cv2
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -31,13 +32,23 @@ def make_patient_id_fn(summary_path=GRADING_SUMMARY):
     return patient_id
 
 
-def load_dataset(name, matching_path, clip_labels_path, group_fn=None):
+def count_frames(path):
+    cap = cv2.VideoCapture(path)
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) if cap.isOpened() else 0
+    cap.release()
+    return n
+
+
+def load_dataset(name, matching_path, clip_labels_path, group_fn=None, min_frames=None, removed=None):
     """Load one dataset (matches + clip_labels) and return synced,
     labeled arrays ready for StratifiedKFold, plus the raw dicts.
-    group_fn: clip id -> group (patient) id for StratifiedGroupKFold."""
+    Clips without matched stills (unmatched_clips) are included as video-only entries.
+    group_fn: clip id -> group (patient) id for StratifiedGroupKFold.
+    min_frames: drop clips whose cleaned clip has <= min_frames frames (appended to `removed`)."""
     with open(matching_path, "r") as f:
         data = json.load(f)
         matches = data.get("matches", data)
+        unmatched = data.get("unmatched_clips", []) if "matches" in data else []
 
     with open(clip_labels_path, "r") as f:
         clip_labels = json.load(f)
@@ -45,9 +56,14 @@ def load_dataset(name, matching_path, clip_labels_path, group_fn=None):
     labeled_clip_ids = []
     stratify_labels = []
 
-    for cid in matches.keys():
+    for cid in list(matches) + unmatched:
         clip_filename = f"{cid}.mp4"
         if clip_filename in clip_labels:
+            if min_frames is not None:
+                n = count_frames(f"data/ensemble_results_paxos{name}/cleaned_videos/CLEAN_{cid}.mp4")
+                if n <= min_frames:
+                    removed.append(f"{cid}\t{n}")
+                    continue
             labeled_clip_ids.append(cid)
             stratify_labels.append(clip_labels[clip_filename])
 
@@ -66,6 +82,7 @@ def create_kfold_splits(
     n_splits=5,
     output_dir="data/stratified_splits",
     random_seed=42,
+    min_frames=None,
 ):
     """
     dataset_configs: list of dicts, e.g.
@@ -86,10 +103,17 @@ def create_kfold_splits(
         os.makedirs(output_dir)
 
     # 1. Load every dataset
+    removed = []
     datasets = [
-        load_dataset(cfg["name"], cfg["matching_path"], cfg["clip_labels_path"], cfg.get("group_fn"))
+        load_dataset(cfg["name"], cfg["matching_path"], cfg["clip_labels_path"], cfg.get("group_fn"),
+                     min_frames, removed)
         for cfg in dataset_configs
     ]
+    if min_frames is not None:
+        with open(os.path.join(output_dir, "removed_videos.txt"), "w") as f:
+            f.write(f"Removed before folding: {len(removed)} clips with <= {min_frames} cleaned-clip frames.\n")
+            f.write("\n".join(removed) + "\n")
+        print(f"Removed {len(removed)} clips with <= {min_frames} frames")
 
     # 2. Compute independent StratifiedKFold splits per dataset
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_seed)
@@ -242,6 +266,8 @@ if __name__ == '__main__':
     parser.add_argument('--output_dir', type=str, default="data/stratified_splits")
     parser.add_argument('--group_by_patient', action='store_true',
                         help='Patient-level folds (StratifiedGroupKFold), see make_patient_id_fn.')
+    parser.add_argument('--min_frames', type=int, default=None,
+                        help='Drop clips with <= this many cleaned-clip frames before folding (q5 splits: 139).')
     args = parser.parse_args()
     group_fn = make_patient_id_fn() if args.group_by_patient else None
     create_kfold_splits(
@@ -257,4 +283,5 @@ if __name__ == '__main__':
         n_splits=5,
         output_dir=args.output_dir,
         random_seed=42,
-    )
+        min_frames=args.min_frames,
+    )

@@ -17,7 +17,7 @@ from sklearn.metrics import (
     precision_recall_curve, roc_curve, auc, confusion_matrix
 )
 
-BINARY_HEADLINE = ['F1', 'ROC_AUC_Direct', 'PR_AUC_Direct', 'Best_Thresh']
+BINARY_HEADLINE = ['F1', 'ROC_AUC_Direct', 'PR_AUC_Direct']
 MULTI_HEADLINE = [
     'acc', 'qwk', 'referable_recall', 'f1_macro', 'f1_weighted',
     'precision_macro', 'recall_macro', 'roc_auc_macro', 'pr_auc_macro'
@@ -71,15 +71,7 @@ def detect_models(df):
 # ----------------------------------------------------------------------------
 # Binary analysis
 # ----------------------------------------------------------------------------
-def find_best_threshold(y_true, y_probs):
-    prec, rec, thresholds = precision_recall_curve(y_true, y_probs)
-    f1_scores = np.divide(
-        2 * (prec * rec), (prec + rec),
-        out=np.zeros_like(prec), where=(prec + rec) != 0
-    )
-    best_idx = np.argmax(f1_scores)
-    thresh_idx = min(best_idx, len(thresholds) - 1)
-    return thresholds[thresh_idx], f1_scores[best_idx]
+FIXED_THRESH = 0.5  # binary decision threshold on P(referable)
 
 
 def get_video_frame_stats(video_name, txt_dir):
@@ -109,10 +101,10 @@ def analyse_binary(df, split_name, score_col, model_name, output_dir, txt_dir):
     roc_auc_integral = auc(fpr, tpr)
     pr_auc_integral = auc(rec, prec)
 
-    best_thresh, best_f1 = find_best_threshold(y_true, y_probs)
-
+    # F1 / confusion matrix / errors at a fixed threshold (an F1-optimal one would be tuned on the evaluated videos).
     sort_idx = np.argsort(-y_probs)
-    y_pred = (y_probs >= best_thresh).astype(int)
+    y_pred = (y_probs >= FIXED_THRESH).astype(int)
+    f1_fixed = f1_score(y_true, y_pred, zero_division=0)
     is_correct = (y_true == y_pred)
 
     video_col = "video" if "video" in df.columns else df.columns[0]
@@ -132,8 +124,8 @@ def analyse_binary(df, split_name, score_col, model_name, output_dir, txt_dir):
     ax = next(axes)
     ax.scatter(range(len(y_probs)), y_probs[sort_idx], c=colors, s=15, alpha=0.8,
                edgecolors="black", linewidths=0.5)
-    ax.axhline(best_thresh, color="black", linestyle="--", label=f"Thresh: {best_thresh:.2f}")
-    ax.set_title(f"Ranking\nF1: {best_f1:.3f}")
+    ax.axhline(FIXED_THRESH, color="black", linestyle="--", label=f"Thresh: {FIXED_THRESH:.2f}")
+    ax.set_title(f"Ranking\nF1@{FIXED_THRESH}: {f1_fixed:.3f}")
     ax.set_ylim(-0.05, 1.05)
     ax.set_ylabel("Score")
     ax.legend()
@@ -163,8 +155,8 @@ def analyse_binary(df, split_name, score_col, model_name, output_dir, txt_dir):
 
     # Confusion matrix
     ax = next(axes)
-    sns.heatmap(confusion_matrix(y_true, y_pred), annot=True, fmt="d", cmap="Blues", ax=ax, cbar=False)
-    ax.set_title("CM @ Opt. Thresh")
+    sns.heatmap(confusion_matrix(y_true, y_pred, labels=[0, 1]), annot=True, fmt="d", cmap="Blues", ax=ax, cbar=False)
+    ax.set_title(f"CM @ {FIXED_THRESH}")
     ax.set_xlabel("Predicted")
     ax.set_ylabel("Actual")
 
@@ -196,8 +188,7 @@ def analyse_binary(df, split_name, score_col, model_name, output_dir, txt_dir):
     metrics = {
         "Split": split_name,
         "Model": model_name,
-        "Best_Thresh": best_thresh,
-        "F1": best_f1,
+        "F1": f1_fixed,
         "ROC_AUC_Direct": roc_auc_direct,
         "ROC_AUC_Integral": roc_auc_integral,
         "PR_AUC_Direct": pr_auc_direct,
@@ -214,7 +205,7 @@ def multiclass_metrics(y_true, y_pred, y_probs, num_classes):
     labels = list(range(num_classes))
     y_true_onehot = np.eye(num_classes)[y_true]
 
-    qwk = cohen_kappa_score(y_true, y_pred, weights='quadratic')
+    qwk = cohen_kappa_score(y_true, y_pred, labels=labels, weights='quadratic')
 
     referable_recall = recall_score(
         (y_true >= 2).astype(int), (y_pred >= 2).astype(int), zero_division=0
@@ -363,7 +354,7 @@ def plot_metric_summary(summary_df, metrics_to_plot, model_order, shape, figsize
         sns.barplot(
             data=summary_df, x="Model", y=metric, hue="Model",
             order=model_order, hue_order=model_order, ax=ax, palette="Set2",
-            width=0.5, alpha=0.7, legend=False, errorbar="sd", capsize=0.15,
+            width=0.5, alpha=0.7, legend=False, errorbar="se", capsize=0.15,
             err_kws={"linewidth": 1.5, "color": "#333333"}
         )
         sns.stripplot(
@@ -389,21 +380,22 @@ def plot_metric_summary(summary_df, metrics_to_plot, model_order, shape, figsize
 
 
 def print_comparison_overview(summary_df, metrics, model_order, output_dir):
-    """Prints and saves mean ± SD per model and metric."""
+    """Prints and saves 'mean ± SE (SD x)' over splits per model and metric (the plots show mean ± SE)."""
     cols = [c for c in metrics if c in summary_df.columns]
     grouped = summary_df.groupby('Model')[cols]
-    means, stds = grouped.mean(), grouped.std()
+    means, stds, sems = grouped.mean(), grouped.std(), grouped.sem()
 
     rows = []
     for metric in cols:
         row = {'Metric': metric}
         for model in model_order:
-            row[model] = (f"{means.loc[model, metric]:.4f} ± {stds.loc[model, metric]:.4f}"
+            row[model] = (f"{means.loc[model, metric]:.4f} ± {sems.loc[model, metric]:.4f} "
+                          f"(SD {stds.loc[model, metric]:.4f})"
                           if model in means.index else "N/A")
         rows.append(row)
 
     comp_df = pd.DataFrame(rows)
-    print("\n" + "=" * 20 + " MODEL COMPARISON OVERVIEW " + "=" * 20)
+    print("\n" + "=" * 20 + " MODEL COMPARISON OVERVIEW (mean ± SE (SD)) " + "=" * 20)
     print(comp_df.to_string(index=False))
 
     out_file = os.path.join(output_dir, "model_comparison_summary.csv")
@@ -489,10 +481,9 @@ def main(args):
 
         plot_metric_summary(
             summary_df,
-            [("F1", "Optimal F1 Score"), ("ROC_AUC_Direct", "ROC-AUC"),
-             ("PR_AUC_Direct", "PR-AUC"), ("Best_Thresh", "Optimal Threshold")],
-            res["models"], (2, 2), (12, 10),
-            f"Binary Performance Across {summary_df['Split'].nunique()} Splits (Mean ± SD)", out
+            [("F1", f"F1 @ {FIXED_THRESH} Threshold"), ("ROC_AUC_Direct", "ROC-AUC"), ("PR_AUC_Direct", "PR-AUC")],
+            res["models"], (1, 3), (18, 5.5),
+            f"Binary Performance Across {summary_df['Split'].nunique()} Splits (Mean ± SE)", out
         )
         print_cross_model_error_analysis(res["tracker"], "binary")
         print_comparison_overview(summary_df, BINARY_HEADLINE, res["models"], out)
@@ -518,7 +509,7 @@ def main(args):
              ('referable_recall', 'Referable Recall (Grade >= 2)'), ('f1_macro', 'F1 Macro'),
              ('roc_auc_macro', 'ROC-AUC Macro'), ('pr_auc_macro', 'PR-AUC Macro')],
             res["models"], (2, 3), (16, 10),
-            f"Model Performance Across {summary_df['Split'].nunique()} Splits (Mean ± SD)", out
+            f"Model Performance Across {summary_df['Split'].nunique()} Splits (Mean ± SE)", out
         )
         print_cross_model_error_analysis(res["tracker"], "multiclass")
         print_comparison_overview(summary_df, MULTI_HEADLINE, res["models"], out)
@@ -528,7 +519,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_dir', type=str, default=".", help="Folder with the prediction CSVs.")
     parser.add_argument('--output_dir', type=str, default="split_analysis_results")
-    parser.add_argument('--txt_dir', type=str, default="../ensemble_results_paxos2025/txt_files",
+    parser.add_argument('--txt_dir', type=str,
+                        default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                             "..", "ensemble_results_paxos2025", "txt_files"),
                         help="Frame-level txt files for the binary informativeness panels. "
                              "If the folder does not exist, those panels are skipped.")
     main(parser.parse_args())

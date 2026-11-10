@@ -119,6 +119,7 @@ def main(args):
             num_frames=32,
             transform=val_trans,
             search_dir_paths=[args.videos_path],
+            crop_borders=args.crop_borders,
         )
         if args.limit:
             # Grab one video per grade (in dataset order) for a representative,
@@ -155,6 +156,8 @@ if __name__ == "__main__":
     parser.add_argument('--output_dir', type=str, default="transformer_attention_analysis")
     parser.add_argument('--img_size', type=int, default=512)
     parser.add_argument('--complex_augs', action='store_true')
+    parser.add_argument('--no_crop_borders', dest='crop_borders', action='store_false',
+                        help='Keep black borders (models trained before 2026-11-01 / with --no_crop_borders).')
 
     args = parser.parse_args()
     main(args)

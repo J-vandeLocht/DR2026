@@ -6,10 +6,10 @@ import json
 import argparse
 
 from data.dataset import MILVideoDataset
-from .utils import (make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, load_dino_backbone, EXTRA_AUGS,
+from .utils import (make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, load_backbone, BACKBONES, EXTRA_AUGS,
                     load_backbone_from_classifier, freeze_module)
 from misc.training import (seed_everything, make_run_dir, video_search_dirs, make_balanced_loaders,
-                           make_optimizer, EpochLogger, SELECTION_METRICS)
+                           make_optimizer, EpochLogger, SELECTION_METRICS, make_criterion, add_balancing_args)
 from transformer.adapters import ADAPTERS, build_adapter
 from transformer.model import AGGREGATION_MODES, BagTransformer
 from transformer.utils import train_one_epoch_trans, validate_extended_trans
@@ -17,6 +17,8 @@ from transformer.utils import train_one_epoch_trans, validate_extended_trans
 
 class DinoSelfAttention(BagTransformer):
     """DINOv3 ViT-L backbone (CLS token per frame) -> BagTransformer head.
+    backbone='retfound_dinov2' swaps in RETFound_dinov2_meh (ViT-L/14, inputs resized to backbone_img_size,
+    dino/utils.py::RetFoundBackbone).
 
     dense_adapter (a transformer/adapters.py name) instead feeds the 32x32
     patch-token grid (512px input) through that adapter, giving one or
@@ -47,6 +49,8 @@ class DinoSelfAttention(BagTransformer):
             adapter_pe=True,
             classifier_checkpoint_path=None,
             full_checkpoint_path=None,
+            backbone="dinov3",
+            backbone_img_size=224,
     ):
         super().__init__()
 
@@ -55,7 +59,7 @@ class DinoSelfAttention(BagTransformer):
                 "Specify either classifier_checkpoint_path or full_checkpoint_path, not both."
             )
 
-        self.backbone = load_dino_backbone()
+        self.backbone = load_backbone(backbone, backbone_img_size)
         self.dense_adapter = dense_adapter
         if dense_adapter is None:
             self.adapter = None
@@ -90,10 +94,10 @@ class DinoSelfAttention(BagTransformer):
             self.backbone.grad_checkpointing = True
 
     def backbone_feature_map(self, x):
-        """[N, 3, H, W] -> [N, C, H/16, W/16] grid of normed DINO patch tokens."""
+        """[N, 3, H, W] -> [N, C, h, w] grid of normed patch tokens (h = w = H/16 for DINOv3)."""
         tokens = self.backbone.forward_features(x)["x_norm_patchtokens"]  # [N, h*w, C]
-        p = self.backbone.patch_size
-        return tokens.transpose(1, 2).reshape(x.size(0), -1, x.size(-2) // p, x.size(-1) // p)
+        side = int(tokens.size(1) ** 0.5)
+        return tokens.transpose(1, 2).reshape(x.size(0), -1, side, side)
 
     def extract_features(self, x):
         # [num_frames, 3, H, W] -> [num_frames, L] DINO CLS tokens, or the
@@ -108,6 +112,7 @@ def train_self_attention(args):
     seed_everything(args.seed)
 
     description = (f"dino_sa_"
+                f"{f'{args.backbone}-{args.backbone_img_size}_' if args.backbone != 'dinov3' else ''}"
                 f"{"binary" if args.binary_classification else "all"}_"
                 f"{args.split_path.split('/')[-1]}_"
                 f"{"full" if args.train_json == "mil_train.json" else args.train_json.split(".")[0].split("_")[-1]}"
@@ -138,6 +143,8 @@ def train_self_attention(args):
         adapter_dim=args.adapter_dim,
         adapter_pe=not args.no_adapter_pe,
         num_classes=1 if args.binary_classification else 5,
+        backbone=args.backbone,
+        backbone_img_size=args.backbone_img_size,
     )
     model = DinoSelfAttention(classifier_checkpoint_path=args.classifier_checkpoint,
                               freeze_backbone=args.freeze_backbone,
@@ -158,13 +165,17 @@ def train_self_attention(args):
                            transform=train_trans,
                            bag_transform=train_bag_trans,
                            random_segment_sample=args.random_segment_sample,
-                           search_dir_paths=search_dir_paths, min_bag_size=args.min_bag_size)
+                           search_dir_paths=search_dir_paths, min_bag_size=args.min_bag_size,
+                           crop_borders=args.crop_borders)
     val_ds = MILVideoDataset(os.path.join(args.split_path, args.val_json),
                          num_frames=args.num_frames,
                          transform=val_trans,
-                         search_dir_paths=search_dir_paths)
-    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, args.binary_classification)
+                         search_dir_paths=search_dir_paths, crop_borders=args.crop_borders)
+    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, args.binary_classification,
+                                                     sampler_power=args.sampler_power)
 
+    # Class weights only in the training loss; validation loss stays unweighted.
+    train_criterion = make_criterion(train_ds, args.binary_classification, args.class_weight_power).to(device)
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     optimizer = make_optimizer(model, args.lr, args.backbone_lr_mult, args.optimizer, args.weight_decay)
     if args.lr_schedule == 'cosine':
@@ -182,7 +193,7 @@ def train_self_attention(args):
 
     for epoch in range(args.epochs):
         t_loss, t_attn_entropy = train_one_epoch_trans(
-            model, train_loader, criterion, optimizer, args.binary_classification, device, scaler,
+            model, train_loader, train_criterion, optimizer, args.binary_classification, device, scaler,
             entropy_weight=args.attn_entropy_weight, distance_scale_weight=args.distance_scale_weight,
         )
         m = validate_extended_trans(model, val_loader, criterion, args.binary_classification, device)
@@ -197,6 +208,10 @@ def build_parser():
     # Also used by dino/hp_sweep.py, so sweep trials always get every argument's default.
     parser = argparse.ArgumentParser()
 
+    parser.add_argument('--backbone', type=str, default='dinov3', choices=BACKBONES,
+                        help="Frame encoder: DINOv3 ViT-L/16 or RETFound_dinov2_meh (ViT-L/14).")
+    parser.add_argument('--backbone_img_size', type=int, default=224,
+                        help='RETFound input size (frames are resized from --img_size inside the backbone); multiple of 14.')
     parser.add_argument('--classifier_checkpoint', type=str, default=None,
                         help='Path to trained classifier model (.pth)')
     parser.add_argument('--seed', type=int, default=42,
@@ -260,6 +275,7 @@ def build_parser():
     parser.add_argument('--binary_classification', action='store_true')
     parser.add_argument('--run_tag', type=str, default=None,
                         help='Optional short suffix appended to the run name (e.g. an experiment label).')
+    add_balancing_args(parser)
     return parser
 
 
@@ -276,5 +292,8 @@ if __name__ == "__main__":
         parser.error('--selection_metric combined (QWK + referable recall + acc) is 5-class only')
     if args.no_adapter_pe and args.dense_adapter != 'linear_attnpool':
         parser.error('--no_adapter_pe needs --dense_adapter linear_attnpool')
+
+    if args.backbone != 'dinov3' and args.classifier_checkpoint:
+        parser.error('--classifier_checkpoint holds DINOv3 classifier weights, only for --backbone dinov3')
 
     train_self_attention(args)

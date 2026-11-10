@@ -10,8 +10,30 @@ import re
 from collections import Counter
 
 
+def crop_black_borders(rgb, thresh=15, min_frac=0.02, margin=4):
+    """Trim outer rows/cols of a uint8 HxWx3 frame where < min_frac of pixels exceed thresh, then pad the box to a
+    square (black) so the round fundus isn't distorted by a square resize. Returns the frame unchanged if nothing is left."""
+    fg = rgb.max(axis=2) > thresh
+    rows = np.flatnonzero(fg.mean(axis=1) >= min_frac)
+    cols = np.flatnonzero(fg.mean(axis=0) >= min_frac)
+    if len(rows) < 2 or len(cols) < 2:
+        return rgb
+    h, w = fg.shape
+    r0, r1 = max(rows[0] - margin, 0), min(rows[-1] + margin + 1, h)
+    c0, c1 = max(cols[0] - margin, 0), min(cols[-1] + margin + 1, w)
+    crop = rgb[r0:r1, c0:c1]
+    side = max(crop.shape[:2])
+    out = np.zeros((side, side, 3), dtype=rgb.dtype)
+    top, left = (side - crop.shape[0]) // 2, (side - crop.shape[1]) // 2
+    out[top:top + crop.shape[0], left:left + crop.shape[1]] = crop
+    return out
+
+
+
 class FrameDataset(Dataset):
-    def __init__(self, json_path, img_dirs, transform=None):
+    def __init__(self, json_path, img_dirs, transform=None, crop_borders=False):
+        """crop_borders: trim black borders (crop_black_borders) before the transform."""
+        self.crop_borders = crop_borders
         with open(json_path, 'r') as f:
             label_data = json.load(f)
 
@@ -53,6 +75,8 @@ class FrameDataset(Dataset):
 
     def __getitem__(self, idx):
         img = Image.open(self.image_paths[idx]).convert('RGB')
+        if self.crop_borders:
+            img = Image.fromarray(crop_black_borders(np.asarray(img)))
         if self.transform:
             img = self.transform(img)
 
@@ -61,9 +85,11 @@ class FrameDataset(Dataset):
 
 class MILVideoDataset(Dataset):
     def __init__(self, json_path, num_frames=32, transform=None, random_segment_sample=False, search_dir_paths=None,
-                 bag_transform=None, min_bag_size=None):
+                 bag_transform=None, min_bag_size=None, crop_borders=False):
         """`transform` is applied per frame; optional `bag_transform` once to the stacked [T, C, H, W] bag.
-        min_bag_size (train only): each bag keeps a random sorted subset of k ~ U[min_bag_size, num_frames] sampled frames."""
+        min_bag_size (train only): each bag keeps a random sorted subset of k ~ U[min_bag_size, num_frames] sampled frames.
+        crop_borders: trim each frame's black borders (crop_black_borders) before the transform."""
+        self.crop_borders = crop_borders
         self.min_bag_size = min_bag_size
         with open(json_path, 'r') as f:
             self.label_map = json.load(f)
@@ -201,6 +227,8 @@ class MILVideoDataset(Dataset):
 
             last_valid_frame = frame
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            if self.crop_borders:
+                frame_rgb = crop_black_borders(frame_rgb)
             img = Image.fromarray(frame_rgb)
 
             if self.transform:
@@ -216,6 +244,8 @@ class MILVideoDataset(Dataset):
 
         while len(frames) < bag_size and last_valid_frame is not None:
             frame_rgb = cv2.cvtColor(last_valid_frame, cv2.COLOR_BGR2RGB)
+            if self.crop_borders:
+                frame_rgb = crop_black_borders(frame_rgb)
             img = Image.fromarray(frame_rgb)
             if self.transform:
                 img = self.transform(img)
@@ -250,6 +280,8 @@ class KaggleDRDataset(Dataset):
 
     def __getitem__(self, idx):
         img = Image.open(self.image_paths[idx]).convert('RGB')
+        if self.crop_borders:
+            img = Image.fromarray(crop_black_borders(np.asarray(img)))
         if self.transform:
             img = self.transform(img)
         return img, torch.tensor(self.labels[idx], dtype=torch.long)

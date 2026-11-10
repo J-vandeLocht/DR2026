@@ -5,15 +5,70 @@ import numpy as np
 from PIL import Image
 from torchvision.transforms import v2
 
+from dino.domain_augs import Paxos2020Aug
+
 
 DINO_REPO = "dino/dinov3"
 DINO_WEIGHTS = "dino/dinov3_vitl16_pretrain_lvd1689m-8aa4cbdd.pth"
 DINO_WEIGHTS_SAT = "dino/dinov3_vitl16_pretrain_sat493m-eadcf0ff.pth"  # same architecture, satellite pretraining
+RETFOUND_WEIGHTS = "dino/RETFound_dinov2_meh.pth"  # gated HF repo YukunZhou/RETFound_dinov2_meh
+BACKBONES = ("dinov3", "retfound_dinov2")
 
 
 def load_dino_backbone(weights=DINO_WEIGHTS):
     """Pretrained DINOv3 ViT-L/16 from the local hub clone."""
     return torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", weights=weights)
+
+
+class RetFoundBackbone(nn.Module):
+    """RETFound_dinov2_meh (timm DINOv2 ViT-L/14, fundus-pretrained at 224px) with the DINOv3 interface used by the
+    aggregators: embed_dim, patch_size, forward_features -> normed CLS/patch tokens, grad_checkpointing flag.
+    Inputs are resized to img_size inside forward_features, so the 512px data pipeline stays unchanged; other img_size
+    than the pretraining 224 resamples the position embedding."""
+
+    def __init__(self, weights=RETFOUND_WEIGHTS, img_size=224):
+        super().__init__()
+        import timm
+        from timm.layers import resample_abs_pos_embed
+        self.model = timm.create_model("vit_large_patch14_dinov2", pretrained=False, img_size=img_size, num_classes=0)
+        self.img_size = img_size
+        self.embed_dim, self.patch_size = self.model.embed_dim, self.model.patch_embed.patch_size[0]
+        if weights is not None:
+            state = torch.load(weights, map_location="cpu", weights_only=False)
+            state = state.get("teacher", state.get("model", state))
+            # DINO/iBOT heads and the iBOT mask token only exist for pretraining; keys may carry a "backbone." prefix.
+            state = {k.removeprefix("backbone."): v for k, v in state.items()
+                     if not k.startswith(("dino_head.", "ibot_head.")) and k.removeprefix("backbone.") != "mask_token"}
+            grid = self.model.patch_embed.grid_size
+            if state["pos_embed"].shape != self.model.pos_embed.shape:
+                state["pos_embed"] = resample_abs_pos_embed(state["pos_embed"], grid,
+                                                            num_prefix_tokens=self.model.num_prefix_tokens)
+            self.model.load_state_dict(state, strict=True)
+            print(f"RETFound weights loaded strictly ({len(state)} tensors) from {weights}")
+
+    @property
+    def grad_checkpointing(self):
+        return self.model.grad_checkpointing
+
+    @grad_checkpointing.setter
+    def grad_checkpointing(self, enable):
+        self.model.set_grad_checkpointing(enable)
+
+    def forward_features(self, x):
+        if x.shape[-2:] != (self.img_size, self.img_size):
+            x = nn.functional.interpolate(x, size=(self.img_size, self.img_size), mode="bilinear", antialias=True)
+        tokens = self.model.forward_features(x)  # [N, prefix + h*w, C], final norm applied
+        p = self.model.num_prefix_tokens
+        return {"x_norm_clstoken": tokens[:, 0], "x_norm_patchtokens": tokens[:, p:]}
+
+
+def load_backbone(name="dinov3", img_size=224):
+    """Backbone by name (BACKBONES): pretrained DINOv3 ViT-L/16 or RETFound_dinov2_meh at img_size (RETFound only)."""
+    if name == "dinov3":
+        return load_dino_backbone()
+    if name == "retfound_dinov2":
+        return RetFoundBackbone(img_size=img_size)
+    raise ValueError(f"Unknown backbone: {name}")
 
 
 def load_backbone_from_classifier(backbone, path):
@@ -92,7 +147,7 @@ def apply_clahe_cv2_dino(img):
     return torch.from_numpy(img).permute(2, 0, 1).float() / 255.0
 
 
-EXTRA_AUGS = ("color", "affine", "degrade")
+EXTRA_AUGS = ("color", "affine", "degrade", "p20_color", "p20_quality", "p20_light")
 
 
 class RandomGamma(nn.Module):
@@ -130,8 +185,14 @@ def _degrade_augs(extra_augs):
             [v2.RandomApply([v2.GaussianNoise(sigma=0.03)], p=0.2)])
 
 
-def make_train_transform_dino(img_size, complex_augs, extra_augs=()):
-    """extra_augs (subset of EXTRA_AUGS) only applies with complex_augs."""
+def _p20_augs(extra_augs):
+    """'p20_color' / 'p20_quality' / 'p20_light': Paxos2020-style look (dino/domain_augs.py), on float images."""
+    groups = [a[4:] for a in extra_augs if a.startswith("p20_")]
+    return [Paxos2020Aug(groups)] if groups else []
+
+
+def make_train_transform_dino(img_size, complex_augs, extra_augs=(), clahe=True):
+    """extra_augs (subset of EXTRA_AUGS) only applies with complex_augs; clahe=False drops CLAHE from complex_augs."""
     if complex_augs:
         jpeg, blur, noise = _degrade_augs(extra_augs)
         return v2.Compose([
@@ -139,12 +200,13 @@ def make_train_transform_dino(img_size, complex_augs, extra_augs=()):
             v2.Resize((img_size, img_size), antialias=True),
             *jpeg,
 
-            v2.Lambda(apply_clahe_cv2_dino),
+            *([v2.Lambda(apply_clahe_cv2_dino)] if clahe else []),
 
             *_random_augs(extra_augs),
             *blur,
 
             v2.ToDtype(torch.float32, scale=True),
+            *_p20_augs(extra_augs),
             *noise,
 
             v2.Normalize(
@@ -159,7 +221,7 @@ def make_train_transform_dino(img_size, complex_augs, extra_augs=()):
                            ])
 
 
-def make_bag_train_transforms_dino(img_size, complex_augs, extra_augs=()):
+def make_bag_train_transforms_dino(img_size, complex_augs, extra_augs=(), clahe=True):
     """Train augs split for frame bags: (per-frame part, part applied once to the stacked [T, C, H, W] bag),
     so every frame of a bag gets the same flip/rotation/jitter; 'degrade' stays per frame."""
     frame = [v2.ToImage(), v2.Resize((img_size, img_size), antialias=True)]
@@ -167,20 +229,20 @@ def make_bag_train_transforms_dino(img_size, complex_augs, extra_augs=()):
     noise = []
     if complex_augs:
         jpeg, blur, noise = _degrade_augs(extra_augs)
-        frame += [*jpeg, v2.Lambda(apply_clahe_cv2_dino), *blur]
-        bag += _random_augs(extra_augs)
+        frame += [*jpeg, *([v2.Lambda(apply_clahe_cv2_dino)] if clahe else []), *blur]
+        bag += _random_augs(extra_augs) + _p20_augs(extra_augs)
     frame += [v2.ToDtype(torch.float32, scale=True), *noise]
     bag.append(v2.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)))
     return v2.Compose(frame), v2.Compose(bag)
 
 
-def make_val_transform_dino(img_size, complex_augs):
+def make_val_transform_dino(img_size, complex_augs, clahe=True):
     if complex_augs:
         return v2.Compose([
             v2.ToImage(),
             v2.Resize((img_size, img_size), antialias=True),
 
-            v2.Lambda(apply_clahe_cv2_dino),
+            *([v2.Lambda(apply_clahe_cv2_dino)] if clahe else []),
 
             v2.ToDtype(torch.float32, scale=True),
 

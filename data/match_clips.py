@@ -13,8 +13,8 @@ CLIP_DIRS = [
 
 
 def get_core_id_from_video(filename):
-    # Removes extension to get the base ID.
-    return os.path.splitext(filename)[0]
+    # Removes extension and the extractor's 'CLEAN_' prefix to get the base ID.
+    return re.sub(r'^CLEAN_', '', os.path.splitext(filename)[0])
 
 
 # Frame naming convention, e.g.:
@@ -24,6 +24,10 @@ FRAME_SUFFIX_RE = re.compile(r'_frame\d+_score[0-9.]+\.png$')
 
 def get_core_id_from_image(filename):
     return FRAME_SUFFIX_RE.sub('', filename)
+
+
+# Repeat recordings of an eye ('R012L3') are merged into one clip ('R012L', data/merge_repeats.py)
+R_REPEAT_RE = re.compile(r'^(R\d+[LR])\d+$')
 
 
 # 1. Get all files across all provided dirs
@@ -79,6 +83,8 @@ image_match_targets = defaultdict(list)
 # 4. Perform Strict Matching
 for img, _ in images:
     img_core = get_core_id_from_image(img)
+    if img_core not in core_id_to_clips and R_REPEAT_RE.match(img_core):
+        img_core = R_REPEAT_RE.match(img_core).group(1)
 
     if img_core in ambiguous_core_ids:
         # Core id exists but is ambiguous among multiple clip files; skip.
@@ -99,11 +105,11 @@ if multiply_matched_images:
 
 # 5. Format for JSON output
 # We use the filename without extension as the key to stay consistent
-final_matches = {os.path.splitext(k)[0]: v for k, v in matches.items() if v}
+final_matches = {get_core_id_from_video(k): v for k, v in matches.items() if v}
 
 results = {
     "matches": final_matches,
-    "unmatched_clips": [os.path.splitext(c)[0] for c, _ in clips if not matches[c]],
+    "unmatched_clips": [get_core_id_from_video(c) for c, _ in clips if not matches[c]],
     "unmatched_images": [img for img, _ in images if img not in matched_images],
 }
 

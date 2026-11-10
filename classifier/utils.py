@@ -28,7 +28,10 @@ def train_one_epoch_classifier(model, loader, criterion, optimizer, binary_class
         if distance_scale_weight > 0 and not binary_classification:
             with torch.no_grad():
                 scale = 1.0 + distance_scale_weight * (outputs.argmax(dim=-1) - targets).abs().float()
-            loss = (F.cross_entropy(outputs, targets, reduction="none") * scale).mean()
+            # Class weights of a WeightedCrossEntropy criterion (misc.training.make_criterion), if any.
+            loss = F.cross_entropy(outputs, targets, reduction="none") * scale
+            weight = getattr(criterion, "weight", None)
+            loss = (loss * weight[targets] if weight is not None else loss).mean()
         else:
             loss = criterion(outputs, targets)
         loss.backward()

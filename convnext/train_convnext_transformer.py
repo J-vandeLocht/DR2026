@@ -8,7 +8,7 @@ import argparse
 from data.dataset import MILVideoDataset
 from dino.utils import make_train_transform_dino, make_bag_train_transforms_dino, make_val_transform_dino, EXTRA_AUGS
 from misc.training import (seed_everything, make_run_dir, video_search_dirs, make_balanced_loaders,
-                           make_optimizer, EpochLogger, SELECTION_METRICS)
+                           make_optimizer, EpochLogger, SELECTION_METRICS, make_criterion, add_balancing_args)
 from transformer.utils import train_one_epoch_trans, validate_extended_trans
 from transformer.adapters import ADAPTERS
 from transformer.model import AGGREGATION_MODES
@@ -30,6 +30,7 @@ def train_convnext_transformer(args):
                 f"{'_aug-' + '-'.join(args.extra_augs) if args.extra_augs else ''}"
                 f"{f'_bag{args.min_bag_size}' if args.min_bag_size else ''}"
                 f"{'_bagaug' if args.bag_consistent_augs else ''}"
+                f"{'_noclahe' if not args.clahe else ''}"
                 f"{f'_sel-{args.selection_metric}' if args.selection_metric != 'default' else ''}")
     run_name, run_dir = make_run_dir("convnext", description, args.run_tag)
     search_dir_paths = video_search_dirs(args.fused_dataset)
@@ -63,22 +64,26 @@ def train_convnext_transformer(args):
     # --- Data ---
     # --bag_consistent_augs: random augs drawn once per bag instead of once per frame.
     if args.bag_consistent_augs:
-        train_trans, train_bag_trans = make_bag_train_transforms_dino(args.img_size, args.complex_augs, args.extra_augs)
+        train_trans, train_bag_trans = make_bag_train_transforms_dino(args.img_size, args.complex_augs, args.extra_augs, args.clahe)
     else:
-        train_trans, train_bag_trans = make_train_transform_dino(args.img_size, args.complex_augs, args.extra_augs), None
-    val_trans = make_val_transform_dino(args.img_size, args.complex_augs)
+        train_trans, train_bag_trans = make_train_transform_dino(args.img_size, args.complex_augs, args.extra_augs, args.clahe), None
+    val_trans = make_val_transform_dino(args.img_size, args.complex_augs, args.clahe)
     train_ds = MILVideoDataset(os.path.join(args.split_path, args.train_json),
                            num_frames=args.num_frames,
                            transform=train_trans,
                            bag_transform=train_bag_trans,
                            random_segment_sample=args.random_segment_sample,
-                           search_dir_paths=search_dir_paths, min_bag_size=args.min_bag_size)
+                           search_dir_paths=search_dir_paths, min_bag_size=args.min_bag_size,
+                           crop_borders=args.crop_borders)
     val_ds = MILVideoDataset(os.path.join(args.split_path, args.val_json),
                          num_frames=args.num_frames,
                          transform=val_trans,
-                         search_dir_paths=search_dir_paths)
-    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, args.binary_classification)
+                         search_dir_paths=search_dir_paths, crop_borders=args.crop_borders)
+    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, args.binary_classification,
+                                                     sampler_power=args.sampler_power)
 
+    # Class weights only in the training loss; validation loss stays unweighted.
+    train_criterion = make_criterion(train_ds, args.binary_classification, args.class_weight_power).to(device)
     criterion = nn.BCEWithLogitsLoss() if args.binary_classification else nn.CrossEntropyLoss()
     # Head + adapter at lr (param_groups[0], used for LR logging), backbone at lr * backbone_lr_mult.
     optimizer = make_optimizer(model, args.lr, args.backbone_lr_mult, args.optimizer, args.weight_decay)
@@ -93,7 +98,7 @@ def train_convnext_transformer(args):
     for epoch in range(args.epochs):
         # No attention-entropy loss term for this experiment; entropy is only logged.
         t_loss, t_attn_entropy = train_one_epoch_trans(
-            model, train_loader, criterion, optimizer, args.binary_classification, device, scaler,
+            model, train_loader, train_criterion, optimizer, args.binary_classification, device, scaler,
             entropy_weight=0.0, distance_scale_weight=args.distance_scale_weight,
         )
         m = validate_extended_trans(model, val_loader, criterion, args.binary_classification, device)
@@ -161,10 +166,14 @@ if __name__ == "__main__":
     parser.add_argument('--fused_dataset', action='store_true')
     parser.add_argument('--extra_augs', nargs='+', default=[], choices=EXTRA_AUGS,
                         help='Extra train augs with --complex_augs (dino/utils.py): color (stronger jitter + gamma), '
-                             'affine (zoom/shift), degrade (blur/JPEG/noise, p 0.2 each).')
+                             'affine (zoom/shift), degrade (blur/JPEG/noise, p 0.2 each), p20_color / p20_quality / p20_light '
+                             '(Paxos2020-style look, dino/domain_augs.py; best with --bag_consistent_augs).')
+    parser.add_argument('--no_clahe', dest='clahe', action='store_false',
+                        help='--complex_augs without CLAHE (train and val; eval with vis_video_results.py --no_clahe).')
     parser.add_argument('--min_bag_size', type=int, default=None,
                         help='Train bags keep a random k in [min_bag_size, num_frames] of the sampled frames (val: all).')
     parser.add_argument('--binary_classification', action='store_true')
+    add_balancing_args(parser)
 
     args = parser.parse_args()
     if args.extra_augs and not args.complex_augs:

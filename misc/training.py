@@ -9,6 +9,8 @@ from datetime import datetime
 import cv2
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from PIL import Image
 from torch.utils.data import DataLoader, WeightedRandomSampler
@@ -55,20 +57,68 @@ def loader_kwargs(num_workers):
 
 
 def make_balanced_loaders(train_ds, val_ds, binary_classification, batch_size=1, require_all_classes=False,
-                          num_workers=4):
-    """Train loader oversampling by inverse class frequency (binary labels or 0-4 grades), plain val loader."""
+                          num_workers=4, sampler_power=1.0):
+    """Train loader oversampling by class frequency ** -sampler_power (binary labels or 0-4 grades; 1 = fully balanced,
+    0.5 = sqrt-balanced, 0 = plain shuffle), plain val loader."""
     targets = np.array(train_ds.labels if binary_classification else train_ds.grades).astype(int)
     class_counts = np.bincount(targets)
     if require_all_classes:
         expected = 2 if binary_classification else 5
         assert len(class_counts) == expected and class_counts.all(), \
             f"Expected {expected} classes, got counts {class_counts.tolist()} - some class missing from split"
-    sample_weights = torch.from_numpy((1.0 / class_counts)[targets]).double()
+    class_weights = np.where(class_counts > 0, np.maximum(class_counts, 1) ** -float(sampler_power), 0.0)
+    share = class_counts * class_weights / (class_counts * class_weights).sum()
+    print(f"Sampler (power {sampler_power}): class counts {class_counts.tolist()} -> "
+          f"expected share {np.round(share, 3).tolist()}")
+    sample_weights = torch.from_numpy(class_weights[targets]).double()
     sampler = WeightedRandomSampler(weights=sample_weights, num_samples=len(sample_weights), replacement=True)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, sampler=sampler, shuffle=False, **loader_kwargs(num_workers))
     val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, **loader_kwargs(num_workers))
     return train_loader, val_loader
+
+
+class WeightedCrossEntropy(nn.Module):
+    """Per-sample class-weighted CE averaged over the batch. Unlike nn.CrossEntropyLoss(weight=...), which divides by the
+    summed target weights (so the weights cancel for a batch of one video), the weights scale the loss itself."""
+
+    def __init__(self, weight):
+        super().__init__()
+        self.register_buffer("weight", weight)
+
+    def forward(self, logits, target):
+        return (F.cross_entropy(logits, target, reduction="none") * self.weight[target]).mean()
+
+
+def add_balancing_args(parser):
+    """--sampler_power, --class_weight_power (defaults = the old behavior), --crop_borders (on by default since 2026-11-01)."""
+    parser.add_argument('--sampler_power', type=float, default=1.0,
+                        help='Oversampling by class count ** -p: 1 = fully balanced, 0.5 = sqrt-balanced, 0 = none.')
+    parser.add_argument('--class_weight_power', type=float, default=0.0,
+                        help='Loss class weights count ** -p (5-class: mean 1 over train samples; binary: pos_weight). 0 = unweighted.')
+    parser.add_argument('--crop_borders', action='store_true', default=True,
+                        help='Trim black frame borders (data.dataset.crop_black_borders) before resizing (default).')
+    parser.add_argument('--no_crop_borders', dest='crop_borders', action='store_false',
+                        help='Keep the black borders (all runs before 2026-11-01).')
+
+
+def make_criterion(train_ds, binary_classification, class_weight_power=0.0):
+    """Training loss with class weights count ** -class_weight_power (0 = unweighted). 5-class: weights normalized to mean 1
+    over the training samples; binary: BCE pos_weight (neg / pos) ** class_weight_power."""
+    targets = np.array(train_ds.labels if binary_classification else train_ds.grades).astype(int)
+    class_counts = np.bincount(targets, minlength=2 if binary_classification else 5)
+    if binary_classification:
+        if class_weight_power == 0:
+            return nn.BCEWithLogitsLoss()
+        pos_weight = (class_counts[0] / class_counts[1]) ** class_weight_power
+        print(f"Class weights (power {class_weight_power}): pos_weight {pos_weight:.3f}")
+        return nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight], dtype=torch.float32))
+    if class_weight_power == 0:
+        return nn.CrossEntropyLoss()
+    weight = np.maximum(class_counts, 1) ** -float(class_weight_power)
+    weight = weight / weight[targets].mean()
+    print(f"Class weights (power {class_weight_power}): {np.round(weight, 3).tolist()}")
+    return WeightedCrossEntropy(torch.tensor(weight, dtype=torch.float32))
 
 
 def make_optimizer(model, lr, backbone_lr_mult=None, optimizer="adamw", weight_decay=0.001):

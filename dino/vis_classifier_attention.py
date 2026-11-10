@@ -9,6 +9,7 @@ import torch.nn as nn
 
 from .train_dino_classifier import DinoClassifier
 from dino.utils import make_val_transform_dino, clahe_rgb
+from data.dataset import crop_black_borders
 
 IMG_SIZE = 512
 TOKEN_SIZE = 16
@@ -145,9 +146,11 @@ def make_overlay(image_rgb, heatmap, max_alpha=0.7):
 # ------------------------------------------------------------
 # Process single image
 # ------------------------------------------------------------
-def process_image(model, image_path, transform, device, out_dir):
+def process_image(model, image_path, transform, device, out_dir, crop_borders=True):
     img = Image.open(image_path).convert("RGB")
     img = np.array(img)
+    if crop_borders:
+        img = crop_black_borders(img)
     img = cv2.resize(img, (IMG_SIZE, IMG_SIZE))
 
     x = transform(Image.fromarray(img))
@@ -207,7 +210,8 @@ def main(args):
             img_path,
             transform,
             device,
-            args.output_dir
+            args.output_dir,
+            crop_borders=args.crop_borders
         )
 
 
@@ -219,6 +223,8 @@ if __name__ == "__main__":
     parser.add_argument("--weights", required=True)
     parser.add_argument("--output_dir", default="occlusion_results")
     parser.add_argument("--complex_augs", action="store_true")
+    parser.add_argument("--no_crop_borders", dest="crop_borders", action="store_false",
+                        help="Keep black borders (models trained before 2026-11-01 / with --no_crop_borders).")
 
     args = parser.parse_args()
 

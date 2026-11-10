@@ -8,7 +8,7 @@ from data.dataset import MILVideoDataset
 from .utils import (make_train_transform_dino, make_val_transform_dino, load_dino_backbone,
                     load_backbone_from_classifier, freeze_module, make_mlp_head)
 from misc.training import (seed_everything, make_run_dir, video_search_dirs, make_balanced_loaders,
-                           make_optimizer, EpochLogger)
+                           make_optimizer, EpochLogger, make_criterion, add_balancing_args)
 from transformer.utils import train_one_epoch_trans, validate_extended_trans
 
 
@@ -106,14 +106,17 @@ def train_mil(args):
                                num_frames=32,
                                transform=train_trans,
                                random_segment_sample=args.random_segment_sample,
-                               search_dir_paths=search_dir_paths)
+                               search_dir_paths=search_dir_paths, crop_borders=args.crop_borders)
     val_ds = MILVideoDataset(os.path.join(args.split_path, args.val_json),
                              num_frames=32,
                              transform=val_trans,
-                             search_dir_paths=search_dir_paths)
+                             search_dir_paths=search_dir_paths, crop_borders=args.crop_borders)
     # Binary only: the MIL head has a single output.
-    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, binary_classification=True)
+    train_loader, val_loader = make_balanced_loaders(train_ds, val_ds, binary_classification=True,
+                                                     sampler_power=args.sampler_power)
 
+    # Class weights only in the training loss; validation loss stays unweighted.
+    train_criterion = make_criterion(train_ds, True, args.class_weight_power).to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = make_optimizer(model, args.lr)
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.lr_step, gamma=0.1)
@@ -124,7 +127,7 @@ def train_mil(args):
     print(f"Starting MIL Training: {run_name}")
 
     for epoch in range(args.epochs):
-        t_loss, _ = train_one_epoch_trans(model, train_loader, criterion, optimizer, True, device, scaler)
+        t_loss, _ = train_one_epoch_trans(model, train_loader, train_criterion, optimizer, True, device, scaler)
         m = validate_extended_trans(model, val_loader, criterion, True, device)
         scheduler.step()
         logger.log_epoch(epoch, model, optimizer, t_loss, m)
@@ -151,6 +154,7 @@ if __name__ == "__main__":
     parser.add_argument('--fused_dataset', action='store_true')
     parser.add_argument('--run_tag', type=str, default=None,
                         help='Optional short suffix appended to the run name (e.g. an experiment label).')
+    add_balancing_args(parser)
 
     args = parser.parse_args()
 

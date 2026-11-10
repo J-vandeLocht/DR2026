@@ -5,7 +5,11 @@ import re
 from collections import defaultdict
 
 matching_file = "data/matching_results_2025.json"
-csv_path = "data/DR_Grading_Summary_v3.csv"
+# Grade sources (path, id column, grade column); campR = sheet 2 of paxos_grading_campR.xlsx (R-series only).
+grade_csvs = [
+    ("data/DR_Grading_Summary_v3.csv", "File_Name", "Grading"),
+    ("data/DR_Grading_campR.csv", "Eye_ID", "Paxos_DR"),
+]
 
 
 def normalize_id(s):
@@ -22,11 +26,6 @@ def normalize_id(s):
 # CSV's File_Name column is just the bare ID ('5063', '3502', 'R027R').
 # This pulls that bare ID back out of a descriptive name.
 IMG_ID_RE = re.compile(r'IMG_?(\d+)', re.IGNORECASE)
-
-# Matches R-coded IDs with a trailing repeat/segment digit, e.g. 'R008R2' ->
-# base 'R008R', or 'R034L3' -> base 'R034L'. Group 1 is the base code.
-R_CODE_SUFFIX_RE = re.compile(r'^(R\d+[LR])\d+$')
-
 
 def extract_file_id(name):
     name = os.path.splitext(name)[0]  # strip extension if present
@@ -55,54 +54,41 @@ matches_data = matching_results["matches"]
 unmatched_clips = matching_results["unmatched_clips"]
 unmatched_images = matching_results["unmatched_images"]
 
-# 2. Load groundtruth from the CSV into a normalized dict.
+# 2. Load groundtruth from the CSVs into a normalized dict.
 csv_grades = {}
 grade_sources = {}  # normalized_key -> source label (first row that set it)
 row_count = 0
 
-with open(csv_path, mode='r') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        row_count += 1
-        file_name_raw = row['File_Name'].strip()
-        normalized_key = normalize_id(file_name_raw)
-        grade = int(row['Grading'])
+for csv_path, id_col, grade_col in grade_csvs:
+    with open(csv_path, mode='r') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            row_count += 1
+            file_name_raw = row[id_col].strip()
+            normalized_key = normalize_id(file_name_raw)
+            grade = int(row[grade_col])
+            source = f"{os.path.basename(csv_path)} ({id_col}={file_name_raw!r})"
 
-        if normalized_key in csv_grades:
-            if csv_grades[normalized_key] != grade:
-                print(f"WARNING: conflicting grade for {normalized_key!r} -- "
-                      f"CSV row {file_name_raw!r} says {grade}, but {grade_sources[normalized_key]} "
-                      f"already set {csv_grades[normalized_key]}. Keeping the first value.")
-            else:
-                print(f"NOTE: duplicate row for {normalized_key!r} -- "
-                      f"CSV row {file_name_raw!r} repeats grade {grade} already set by "
-                      f"{grade_sources[normalized_key]}. Collapsing to one entry.")
-            continue
+            if normalized_key in csv_grades:
+                if csv_grades[normalized_key] != grade:
+                    print(f"WARNING: conflicting grade for {normalized_key!r} -- "
+                          f"{source} says {grade}, but {grade_sources[normalized_key]} "
+                          f"already set {csv_grades[normalized_key]}. Keeping the first value.")
+                continue
 
-        csv_grades[normalized_key] = grade
-        grade_sources[normalized_key] = f"CSV (File_Name={file_name_raw!r})"
+            csv_grades[normalized_key] = grade
+            grade_sources[normalized_key] = source
 
 print(f"\nRead {row_count} CSV rows -> {len(csv_grades)} unique groundtruth entries "
-      f"({row_count - len(csv_grades)} collapsed as duplicates/conflicts, see above).\n")
+      f"({row_count - len(csv_grades)} collapsed as duplicates, conflicts are warned above).\n")
 
 key_usage = defaultdict(list)  # normalized CSV key -> list of (source, id) that resolved to it (exact matches only now)
 
 
 def find_grade(query_id):
-    # Exact lookup first.
+    # Exact lookup only: repeat recordings of an eye (R008R2, ...) are merged into one clip (merge_repeats.py).
     if query_id in csv_grades:
         return csv_grades[query_id], query_id
-
-    # Narrow fallback: R-coded IDs sometimes have a trailing repeat/segment
-    # digit that the CSV doesn't track separately (e.g. 'R008R2', 'R008R3'
-    # -> CSV only has 'R008R'). Strip that trailing digit and retry -- but
-    # only for this specific R<digits><L/R><digits> shape, not a generic
-    # substring match, which previously caused unrelated IDs to collide.
-    match = R_CODE_SUFFIX_RE.match(query_id)
-    if match:
-        base_id = match.group(1)
-        if base_id in csv_grades:
-            return csv_grades[base_id], base_id
 
     return None, None
 
@@ -111,41 +97,26 @@ def find_grade(query_id):
 final_clip_labels = {}
 final_image_labels = {}
 ungraded_clip_ids = []  # matched clips (i.e. have >=1 image) with no CSV grade
+graded_clips_without_images = []  # labeled for the video pipeline, but no stills for the frame classifier
 
-for clip_id, image_list in matches_data.items():
+# Unmatched clips (no still photos) are labeled too: the video-level pipeline doesn't need stills.
+for clip_id in list(matches_data) + unmatched_clips:
+    image_list = matches_data.get(clip_id, [])
     query_id = normalize_id(extract_file_id(clip_id))
     grade, matched_key = find_grade(query_id)
 
     if grade is not None:
         final_clip_labels[f"{clip_id}.mp4"] = grade
-        key_usage[matched_key].append(("matched clip", clip_id))
+        key_usage[matched_key].append(("matched clip" if image_list else "unmatched clip", clip_id))
         for img_name in image_list:
             final_image_labels[img_name] = grade
-    else:
+        if not image_list:
+            graded_clips_without_images.append(clip_id)
+    elif image_list:
         ungraded_clip_ids.append(clip_id)
         print(f"Warning: No grade found for: {clip_id} (Extracted ID: {query_id})")
 
 # 4. Overview: where are graded/ungraded clips and images falling through?
-
-# (a) Clips that DO have a grade in the CSV but never got an image match at
-#     all -- pulled from unmatched_clips. If another clip resolving to the
-#     same CSV grade key already has matched images (e.g. 'R008R3' has
-#     frames even though 'R008R2' doesn't, both grading off base 'R008R'),
-#     that grade is already represented in the dataset, so we don't flag it
-#     as missing.
-graded_clips_without_images = []
-for clip_id in unmatched_clips:
-    query_id = normalize_id(extract_file_id(clip_id))
-    grade, matched_key = find_grade(query_id)
-    if grade is None:
-        continue
-
-    covered_by_sibling = any(source == "matched clip" for source, _ in key_usage.get(matched_key, []))
-    if covered_by_sibling:
-        continue  # a sibling clip for this same grade already has images
-
-    graded_clips_without_images.append(clip_id)
-    key_usage[matched_key].append(("unmatched clip", clip_id))
 
 # (b) Unmatched images (no video match found during frame matching) whose
 #     video *would* have had a grade in the CSV, had it been matched.
@@ -164,7 +135,7 @@ for clip_id in ungraded_clip_ids:
     images_with_matched_but_ungraded_video.extend(matches_data[clip_id])
 
 print("--- Grading Coverage Overview ---")
-print(f"Clips graded in CSV but with no matched image (and no sibling clip covering that grade): {len(graded_clips_without_images)}")
+print(f"Graded clips without matched images (video labels only): {len(graded_clips_without_images)}")
 if graded_clips_without_images:
     print(f"  -> {graded_clips_without_images}")
 print(f"Unmatched images whose video has a CSV grade:        {len(unmatched_images_with_graded_video)}")
@@ -204,4 +175,4 @@ with open("data/image_labels_2025.json", "w") as f:
     json.dump(final_image_labels, f, indent=4)
 
 print("Success!")
-print(f"Mapped {len(final_clip_labels)} clips and {len(final_image_labels)} images.")
+print(f"Mapped {len(final_clip_labels)} clips and {len(final_image_labels)} images.")
