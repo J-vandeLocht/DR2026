@@ -13,7 +13,8 @@
 #
 # Prerequisites (run from the repo root first):
 #   python -u -m cropping.make_dataset_annotations --video_dir_2025 <path 2025 videos> --video_dir_2020 <path 2020 videos>
-#   python -u -m cropping.make_splits
+#   python -u -m cropping.make_splits_simple   # video/subject-level folds (no grading sheet needed;
+#                                               # use cropping.make_splits for Eye_ID-based patient folds)
 # and the annotated frames must exist in cropping/frames_to_annotate_larger/.
 #
 # Usage: sbatch scripts/train_cropping_xdomain.sh
