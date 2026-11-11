@@ -13,7 +13,8 @@ All panels of a row are cropped to ONE common square window at native resolution
 clamped to the image) -- no resizing, no skewing -- so the regions are
 pixel-comparable. Predictions are mapped back to native frame resolution first.
 
-Outputs: <out_dir>/vis_compare_2020.png, <out_dir>/vis_compare_2025.png
+Outputs: one PNG per frame in <out_dir>/vis_compare_2020/ and <out_dir>/vis_compare_2025/
+(--n frames per dataset, default 25).
 
 Run from the repo root:
     python -u -m cropping.vis_compare_models
@@ -95,14 +96,14 @@ def main():
     parser.add_argument("--out_dir", type=str, default="cropping/eval_xdomain")
     parser.add_argument("--img_size", type=int, default=768, help="model input size (as trained)")
     parser.add_argument("--encoder_name", type=str, default="efficientnet-b4")
-    parser.add_argument("--n", type=int, default=15, help="frames per eval dataset")
+    parser.add_argument("--n", type=int, default=25, help="frames (one PNG each) per eval dataset")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--configs", nargs="+", default=["2020", "2025"], help="the two models to compare")
     parser.add_argument("--eval_datasets", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
     args = parser.parse_args()
 
-    plt.rcParams.update({"font.size": 10, "axes.titlesize": 12, "axes.labelsize": 9})
+    plt.rcParams.update({"font.size": 11, "axes.titlesize": 13, "axes.labelsize": 10})
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -128,7 +129,9 @@ def main():
                         continue
                     models[(cfg, fold)] = load_model(path, args.encoder_name, device)
 
-        rows = []
+        vis_dir = out_dir / f"vis_compare_{eval_ds}"
+        vis_dir.mkdir(parents=True, exist_ok=True)
+        n_written = 0
         for fold, fn in picks:
             if (c1, fold) not in models or (c2, fold) not in models:
                 continue
@@ -146,43 +149,33 @@ def main():
                     p = (torch.sigmoid(models[(cfg, fold)](inp))[0, 0] > 0.5).cpu().numpy()
                     preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
             r0, c0, side = common_square_window([gt, preds[c1], preds[c2]], h, w)
-            rows.append({
-                "fn": fn, "fold": fold, "side": side,
-                "rgb": img[r0:r0 + side, c0:c0 + side],
-                "gt": gt[r0:r0 + side, c0:c0 + side],
-                "p1": preds[c1][r0:r0 + side, c0:c0 + side],
-                "p2": preds[c2][r0:r0 + side, c0:c0 + side],
-            })
+            rgb = img[r0:r0 + side, c0:c0 + side]
+            crops = {"gt": gt[r0:r0 + side, c0:c0 + side],
+                     "p1": preds[c1][r0:r0 + side, c0:c0 + side],
+                     "p2": preds[c2][r0:r0 + side, c0:c0 + side]}
 
-        if not rows:
-            print(f"eval_ds={eval_ds}: nothing to plot (missing models/images)")
-            continue
-
-        n = len(rows)
-        fig, axes = plt.subplots(n, 3, figsize=(5.2 * 3, 4.8 * n))
-        if n == 1:
-            axes = axes[None, :]
-        for i, r in enumerate(rows):
-            axes[i, 0].set_ylabel("\n".join(textwrap.wrap(r["fn"], 32)) + f"\nfold {r['fold']} | {r['side']}px",
-                                  fontsize=9)
-            for ax in axes[i]:
+            # one figure per frame: ground truth | model c1 | model c2
+            fig, axes = plt.subplots(1, 3, figsize=(5.2 * 3, 5.6))
+            axes[0].set_ylabel("\n".join(textwrap.wrap(fn, 34)) + f"\nfold {fold} | {side}px", fontsize=11)
+            for ax in axes:
                 ax.set_xticks([])
                 ax.set_yticks([])
             for j, (key, title) in enumerate([("gt", "ground truth"),
-                                              ("p1", f"model {c1} | IoU {iou(r['p1'], r['gt']):.3f}"),
-                                              ("p2", f"model {c2} | IoU {iou(r['p2'], r['gt']):.3f}")]):
-                ax = axes[i, j]
-                masked = np.where(r[key][..., None], r["rgb"], 0)  # RGB inside mask, black outside
+                                              ("p1", f"model {c1} | IoU {iou(crops['p1'], crops['gt']):.3f}"),
+                                              ("p2", f"model {c2} | IoU {iou(crops['p2'], crops['gt']):.3f}")]):
+                ax = axes[j]
+                masked = np.where(crops[key][..., None], rgb, 0)  # RGB inside mask, black outside
                 ax.imshow(masked, interpolation="nearest")
-                ax.set_title(title, fontsize=12, pad=6)
-        fig.suptitle(f"Cropping on Paxos{eval_ds} val frames: model {c1} vs model {c2} "
-                     f"(random fold per frame; RGB inside mask, black outside; one common square window per row, no resize)",
-                     fontsize=14)
-        fig.tight_layout(rect=[0, 0, 1, 0.97])
-        out_path = out_dir / f"vis_compare_{eval_ds}.png"
-        fig.savefig(out_path, dpi=130)
-        plt.close(fig)
-        print(f"Wrote {out_path} ({n} frames)")
+                ax.set_title(title, fontsize=14, pad=8)
+            fig.suptitle(f"Paxos{eval_ds} val frame, model {c1} vs model {c2} "
+                         f"(RGB inside mask, black outside; common {side}px square window, no resize)",
+                         fontsize=15)
+            fig.tight_layout(rect=[0, 0, 1, 0.94])
+            out_path = vis_dir / f"{n_written:02d}_{fn.replace(' ', '_')}"
+            fig.savefig(out_path, dpi=140)
+            plt.close(fig)
+            n_written += 1
+        print(f"Wrote {n_written} per-frame plots to {vis_dir}")
 
 
 if __name__ == "__main__":
