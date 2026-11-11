@@ -6,10 +6,11 @@ For each eval dataset (2020 / 2025) this picks --n random frames from the val sp
 writes one PNG per dataset with one row per frame and three panels of EQUAL size:
     ground-truth mask | 2020-model mask (IoU) | 2025-model mask (IoU)
 
-Each panel shows only the lens: all three masks are cropped to one common square
-window at native resolution (side = largest dimension of the three masks, centered
-on their joint bounding box) -- no resizing, no skewing, no overlay -- so the masks
-can be compared pixel by pixel.
+Each panel shows only the lens: the RGB frame under a transparent colored mask
+(green = ground truth, blue/red = the two models). All three panels of a row are
+cropped to one common square window at native resolution (side = largest dimension
+of the three masks, centered on their joint bounding box) -- no resizing, no
+skewing -- so the masks can be compared pixel by pixel.
 
 Outputs: <out_dir>/vis_compare_2020.png, <out_dir>/vis_compare_2025.png
 
@@ -27,6 +28,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import textwrap
+from matplotlib.colors import ListedColormap
 import numpy as np
 import pandas as pd
 import torch
@@ -94,6 +97,7 @@ def main():
     parser.add_argument("--eval_datasets", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
     args = parser.parse_args()
 
+    plt.rcParams.update({"font.size": 10, "axes.titlesize": 12, "axes.labelsize": 9})
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +149,7 @@ def main():
                     # back to native resolution (nearest) so masks are pixel-comparable
                     preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
             r0, c0, side = common_square_window([gt] + list(preds.values()), h, w)
-            crops = {"gt": gt[r0:r0 + side, c0:c0 + side]}
+            crops = {"rgb": img[r0:r0 + side, c0:c0 + side], "gt": gt[r0:r0 + side, c0:c0 + side]}
             for cfg in args.configs:
                 crops[cfg] = preds[cfg][r0:r0 + side, c0:c0 + side]
             rows.append((fn, fold, side, crops))
@@ -156,27 +160,33 @@ def main():
 
         n = len(rows)
         ncols = 1 + len(args.configs)
-        fig, axes = plt.subplots(n, ncols, figsize=(4.5 * ncols, 4.2 * n))
+        fig, axes = plt.subplots(n, ncols, figsize=(5.2 * ncols, 4.8 * n))
         if n == 1:
             axes = axes[None, :]
-        axes[0, 0].set_title("ground truth", fontsize=11)
+        mask_cmaps = {"gt": ListedColormap(["none", "lime"])}
+        pred_colors = ["dodgerblue", "red", "darkorange", "purple"]
         for j, cfg in enumerate(args.configs):
-            axes[0, 1 + j].set_title(f"model {cfg}", fontsize=11)
+            mask_cmaps[cfg] = ListedColormap(["none", pred_colors[j % len(pred_colors)]])
+        for j, t in enumerate(["ground truth"] + [f"model {cfg}" for cfg in args.configs]):
+            axes[0, j].set_title(t, fontsize=12, pad=8)
         for i, (fn, fold, side, crops) in enumerate(rows):
-            axes[i, 0].set_ylabel(f"{fn[:36]}\nfold {fold}, {side}px", fontsize=7)
-            axes[i, 0].imshow(crops["gt"], cmap="gray", interpolation="nearest")
-            for j, cfg in enumerate(args.configs):
-                ax = axes[i, 1 + j]
-                ax.imshow(crops[cfg], cmap="gray", interpolation="nearest")
-                ax.set_title(f"IoU {iou(crops[cfg], crops['gt']):.3f}", fontsize=9)
-            for ax in axes[i]:
+            axes[i, 0].set_ylabel("\n".join(textwrap.wrap(fn, 32)) + f"\nfold {fold} | {side}px", fontsize=8)
+            for j, key in enumerate(["gt"] + args.configs):
+                ax = axes[i, j]
+                ax.imshow(crops["rgb"], interpolation="nearest")
+                m = crops[key]
+                ax.imshow(np.ma.masked_where(~m, m), cmap=mask_cmaps[key], alpha=0.5,
+                          interpolation="nearest")
+                if key != "gt":
+                    ax.set_title(f"IoU {iou(crops[key], crops['gt']):.3f}", fontsize=11)
                 ax.set_xticks([])
                 ax.set_yticks([])
-        fig.suptitle(f"Cropping masks: model {args.configs[0]} vs model {args.configs[1]} on Paxos{eval_ds} "
-                     f"val frames (random fold per frame; white = mask; every row uses one common square window, no resize)")
-        fig.tight_layout(rect=[0, 0, 1, 0.99])
+        fig.suptitle(f"Cropping: model {args.configs[0]} vs model {args.configs[1]} on Paxos{eval_ds} val frames "
+                     f"(random fold per frame; RGB frame under mask; one common square window per row, no resize)",
+                     fontsize=14)
+        fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_path = out_dir / f"vis_compare_{eval_ds}.png"
-        fig.savefig(out_path, dpi=120)
+        fig.savefig(out_path, dpi=130)
         plt.close(fig)
         print(f"Wrote {out_path} ({n} frames)")
 
