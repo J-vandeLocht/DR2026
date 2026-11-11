@@ -12,7 +12,13 @@ DR_Grading_campR.csv) nor the clip labels (data/clip_labels_<year>.json) are rea
 --group_by video keeps each video whole. Either way frames of one video are never
 split across train/val, and the val folds cover every frame exactly once.
 
+If the per-dataset annotation CSVs (annotations_cropping_<year>.csv) are missing,
+they are generated first from the combined annotations CSV + the two video folders
+(--csv, --video_dir_2025, --video_dir_2020), reusing cropping/make_dataset_annotations.py.
+So a fresh checkout only needs the symlinks and this one command.
+
 Outputs (same format as cropping/splits.json, consumed by cropping/train_segmentation.py):
+    cropping/annotations_cropping_2020.csv, cropping/annotations_cropping_2025.csv   (if generated)
     cropping/splits_2020.json, cropping/splits_2025.json
     cropping/splits_<year>_metadata.csv   # per-fold totals only (no grades)
 
@@ -28,6 +34,8 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import GroupKFold
+
+from cropping.make_dataset_annotations import build_video_index, split_annotations, write_dataset_csvs
 
 FRAME_RE = re.compile(r"^(?P<stem>.*)_frame_(?P<idx>\d+)\.(?P<ext>png|jpe?g)$", re.IGNORECASE)
 IMG_RE = re.compile(r"IMG_(\d+)", re.IGNORECASE)
@@ -103,6 +111,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--ann_dir", type=str, default="cropping")
     parser.add_argument("--out_dir", type=str, default="cropping")
+    parser.add_argument("--csv", type=str, default="cropping/annotations_video_frames_larger.csv",
+                        help="Combined annotations CSV, used to generate annotations_cropping_<year>.csv "
+                             "when those are missing.")
+    parser.add_argument("--video_dir_2025", type=str, default="data/ensemble_results_paxos2025/cleaned_videos",
+                        help="Paxos2025 videos (raw or cleaned CLEAN_*.mp4); used only if the per-dataset CSVs are missing.")
+    parser.add_argument("--video_dir_2020", type=str, default="data/ensemble_results_paxos2020/cleaned_videos",
+                        help="Paxos2020 videos (raw or cleaned CLEAN_*.mp4); used only if the per-dataset CSVs are missing.")
     parser.add_argument("--years", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--seed", type=int, default=42)
@@ -112,9 +127,23 @@ def main():
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    ann_dir = Path(args.ann_dir)
+
+    missing = [y for y in args.years if not (ann_dir / f"annotations_cropping_{y}.csv").exists()]
+    if missing:
+        print(f"annotations_cropping CSVs missing for {missing} -- generating them from {args.csv} "
+              f"using {args.video_dir_2025} / {args.video_dir_2020}")
+        index_2025 = build_video_index(args.video_dir_2025)
+        index_2020 = build_video_index(args.video_dir_2020)
+        print(f"Indexed {sum(len(v) for v in index_2025.values())} videos in {args.video_dir_2025} "
+              f"({len(index_2025)} unique stems)")
+        print(f"Indexed {sum(len(v) for v in index_2020.values())} videos in {args.video_dir_2020} "
+              f"({len(index_2020)} unique stems)")
+        per_dataset, skipped, fieldnames = split_annotations(args.csv, index_2025, index_2020)
+        write_dataset_csvs(per_dataset, skipped, fieldnames, ann_dir)
 
     for year in args.years:
-        ann_csv = Path(args.ann_dir) / f"annotations_cropping_{year}.csv"
+        ann_csv = ann_dir / f"annotations_cropping_{year}.csv"
         if not ann_csv.exists():
             print(f"Error: {ann_csv} not found. Run cropping/make_dataset_annotations.py first.")
             continue

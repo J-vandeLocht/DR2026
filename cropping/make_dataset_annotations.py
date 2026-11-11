@@ -6,16 +6,18 @@ both cohorts (e.g. 'R069R_frame_561.png' or
 the video '<stem>.<ext>' in one of the two video folders, so dataset membership
 is decided by looking the stem up in the video folders:
 
-    <stem>_frame_<N>.png  ->  video <stem>.mp4/.MOV/... in --video_dir_2025 or --video_dir_2020
+    <stem>_frame_<N>.png  ->  video <stem>.mp4/.MOV/... (or CLEAN_<stem>...) in
+                              --video_dir_2025 or --video_dir_2020
 
 Rows whose stem matches no video are reported ('no video found') and rows that
 match videos in both folders (or several files) are reported ('multiple matches
 found') and skipped. Output: annotations_cropping_2025.csv and
-annotations_cropping_2020.csv next to the input CSV.
+annotations_cropping_2020.csv next to the input CSV (plus
+annotations_cropping_skipped.txt). cropping/make_splits_simple.py calls these
+functions automatically when the per-dataset CSVs are missing.
 
 Run from the repo root:
-    python -u -m cropping.make_dataset_annotations \
-        --video_dir_2025 data/dr_videos --video_dir_2020 data/Paxos_2020_videos
+    python -u -m cropping.make_dataset_annotations
 """
 
 import argparse
@@ -34,7 +36,7 @@ def video_key(path):
     return s.lower().strip()
 
 
-def index_video_dir(video_dir):
+def build_video_index(video_dir):
     """video_key -> list of matching video paths (only real video extensions)."""
     index = {}
     d = Path(video_dir)
@@ -54,32 +56,19 @@ def frame_stem(filename):
     return None
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--csv", type=str, default="cropping/annotations_video_frames_larger.csv")
-    parser.add_argument("--video_dir_2025", type=str, default="data/dr_videos",
-                        help="Folder with the Paxos2025 videos (e.g. R069R.mp4, IMG_....mp4).")
-    parser.add_argument("--video_dir_2020", type=str, default="data/Paxos_2020_videos",
-                        help="Folder with the Paxos2020 videos.")
-    parser.add_argument("--out_dir", type=str, default="cropping")
-    args = parser.parse_args()
+def split_annotations(csv_path, index_2025, index_2020):
+    """Assign every row of the combined annotations CSV to a dataset.
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(args.csv, newline="") as f:
+    Returns (per_dataset, skipped, fieldnames) where per_dataset maps
+    '2025'/'2020' to the list of rows belonging to that cohort and skipped is
+    the list of filenames that could not be assigned.
+    """
+    with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         fieldnames = reader.fieldnames
         rows = list(reader)
 
-    print(f"Read {len(rows)} annotated frames from {args.csv}")
-
-    index_2025 = index_video_dir(args.video_dir_2025)
-    index_2020 = index_video_dir(args.video_dir_2020)
-    print(f"Indexed {sum(len(v) for v in index_2025.values())} videos in {args.video_dir_2025} "
-          f"({len(index_2025)} unique stems)")
-    print(f"Indexed {sum(len(v) for v in index_2020.values())} videos in {args.video_dir_2020} "
-          f"({len(index_2020)} unique stems)")
+    print(f"Read {len(rows)} annotated frames from {csv_path}")
 
     per_dataset = {"2025": [], "2020": []}
     skipped = []
@@ -107,6 +96,14 @@ def main():
                 continue
         per_dataset[matches[0][0]].append(row)
 
+    return per_dataset, skipped, fieldnames
+
+
+def write_dataset_csvs(per_dataset, skipped, fieldnames, out_dir):
+    """Write annotations_cropping_<year>.csv (+ annotations_cropping_skipped.txt)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    paths = {}
     for year, out_rows in per_dataset.items():
         out_path = out_dir / f"annotations_cropping_{year}.csv"
         with open(out_path, "w", newline="") as f:
@@ -114,7 +111,7 @@ def main():
             writer.writeheader()
             writer.writerows(sorted(out_rows, key=lambda r: r["filename"]))
         print(f"Wrote {len(out_rows)} rows to {out_path}")
-
+        paths[year] = out_path
     if skipped:
         skipped_path = out_dir / "annotations_cropping_skipped.txt"
         with open(skipped_path, "w") as f:
@@ -122,6 +119,28 @@ def main():
         print(f"Skipped {len(skipped)} rows (see {skipped_path})")
     else:
         print("No rows skipped.")
+    return paths
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--csv", type=str, default="cropping/annotations_video_frames_larger.csv")
+    parser.add_argument("--video_dir_2025", type=str, default="data/ensemble_results_paxos2025/cleaned_videos",
+                        help="Folder with the Paxos2025 videos (raw or cleaned CLEAN_*.mp4).")
+    parser.add_argument("--video_dir_2020", type=str, default="data/ensemble_results_paxos2020/cleaned_videos",
+                        help="Folder with the Paxos2020 videos (raw or cleaned CLEAN_*.mp4).")
+    parser.add_argument("--out_dir", type=str, default="cropping")
+    args = parser.parse_args()
+
+    index_2025 = build_video_index(args.video_dir_2025)
+    index_2020 = build_video_index(args.video_dir_2020)
+    print(f"Indexed {sum(len(v) for v in index_2025.values())} videos in {args.video_dir_2025} "
+          f"({len(index_2025)} unique stems)")
+    print(f"Indexed {sum(len(v) for v in index_2020.values())} videos in {args.video_dir_2020} "
+          f"({len(index_2020)} unique stems)")
+
+    per_dataset, skipped, fieldnames = split_annotations(args.csv, index_2025, index_2020)
+    write_dataset_csvs(per_dataset, skipped, fieldnames, args.out_dir)
 
 
 if __name__ == "__main__":

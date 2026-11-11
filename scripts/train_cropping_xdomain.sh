@@ -11,10 +11,12 @@
 # Single-dataset runs train for double the epochs of the 'both' runs (the two
 # cohorts are about the same size): BASE_EPOCHS for 'both', 2*BASE_EPOCHS otherwise.
 #
-# Prerequisites (run from the repo root first):
-#   python -u -m cropping.make_dataset_annotations --video_dir_2025 <path 2025 videos> --video_dir_2020 <path 2020 videos>
-#   python -u -m cropping.make_splits_simple   # video/subject-level folds (no DR grades involved)
-# and the annotated frames must exist in cropping/frames_to_annotate_larger/.
+# Prerequisite (run from the repo root first; on a fresh checkout this also generates
+# annotations_cropping_<year>.csv from the video folders, then the 5 subject-level folds):
+#   python -u -m cropping.make_splits_simple
+#     defaults: --video_dir_2025 data/ensemble_results_paxos2025/cleaned_videos
+#               --video_dir_2020 data/ensemble_results_paxos2020/cleaned_videos
+# The annotated frames must exist in cropping/frames_to_annotate_larger/.
 #
 # Usage: sbatch scripts/train_cropping_xdomain.sh
 #        CONFIGS="2025" bash scripts/train_cropping_xdomain.sh   (subset of configs)
