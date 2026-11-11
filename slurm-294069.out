@@ -1,0 +1,45 @@
+=== train dataset=2020 fold=0 epochs=40 ===
+dataset=2020 fold=0: 272 train / 69 val frames
+dataset=2020 Fold 0 | Epoch 1/40 | Train Loss: 0.5978 | Val IoU: 0.5973
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 2/40 | Train Loss: 0.3370 | Val IoU: 0.9388
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 3/40 | Train Loss: 0.1978 | Val IoU: 0.9629
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 4/40 | Train Loss: 0.1317 | Val IoU: 0.9609
+dataset=2020 Fold 0 | Epoch 5/40 | Train Loss: 0.0977 | Val IoU: 0.9618
+dataset=2020 Fold 0 | Epoch 6/40 | Train Loss: 0.0764 | Val IoU: 0.9664
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 7/40 | Train Loss: 0.0624 | Val IoU: 0.9672
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 8/40 | Train Loss: 0.0529 | Val IoU: 0.9683
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 9/40 | Train Loss: 0.0456 | Val IoU: 0.9683
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 10/40 | Train Loss: 0.0398 | Val IoU: 0.9688
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 11/40 | Train Loss: 0.0360 | Val IoU: 0.9670
+dataset=2020 Fold 0 | Epoch 12/40 | Train Loss: 0.0329 | Val IoU: 0.9680
+dataset=2020 Fold 0 | Epoch 13/40 | Train Loss: 0.0302 | Val IoU: 0.9681
+dataset=2020 Fold 0 | Epoch 14/40 | Train Loss: 0.0281 | Val IoU: 0.9682
+dataset=2020 Fold 0 | Epoch 15/40 | Train Loss: 0.0267 | Val IoU: 0.9684
+dataset=2020 Fold 0 | Epoch 16/40 | Train Loss: 0.0250 | Val IoU: 0.9658
+dataset=2020 Fold 0 | Epoch 17/40 | Train Loss: 0.0235 | Val IoU: 0.9676
+dataset=2020 Fold 0 | Epoch 18/40 | Train Loss: 0.0229 | Val IoU: 0.9684
+dataset=2020 Fold 0 | Epoch 19/40 | Train Loss: 0.0215 | Val IoU: 0.9690
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 20/40 | Train Loss: 0.0211 | Val IoU: 0.9666
+dataset=2020 Fold 0 | Epoch 21/40 | Train Loss: 0.0215 | Val IoU: 0.9650
+dataset=2020 Fold 0 | Epoch 22/40 | Train Loss: 0.0201 | Val IoU: 0.9677
+dataset=2020 Fold 0 | Epoch 23/40 | Train Loss: 0.0193 | Val IoU: 0.9679
+dataset=2020 Fold 0 | Epoch 24/40 | Train Loss: 0.0183 | Val IoU: 0.9675
+dataset=2020 Fold 0 | Epoch 25/40 | Train Loss: 0.0185 | Val IoU: 0.9699
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 26/40 | Train Loss: 0.0176 | Val IoU: 0.9694
+dataset=2020 Fold 0 | Epoch 27/40 | Train Loss: 0.0174 | Val IoU: 0.9691
+dataset=2020 Fold 0 | Epoch 28/40 | Train Loss: 0.0166 | Val IoU: 0.9681
+dataset=2020 Fold 0 | Epoch 29/40 | Train Loss: 0.0166 | Val IoU: 0.9684
+dataset=2020 Fold 0 | Epoch 30/40 | Train Loss: 0.0163 | Val IoU: 0.9685
+dataset=2020 Fold 0 | Epoch 31/40 | Train Loss: 0.0172 | Val IoU: 0.9692
+dataset=2020 Fold 0 | Epoch 32/40 | Train Loss: 0.0160 | Val IoU: 0.9687
+dataset=2020 Fold 0 | Epoch 33/40 | Train Loss: 0.0151 | Val IoU: 0.9689
