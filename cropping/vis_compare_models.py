@@ -1,10 +1,15 @@
-"""Side-by-side visual comparison of the cropping models trained on Paxos2020 vs Paxos2025.
+"""Side-by-side pixel-wise comparison of the cropping masks: Paxos2020 vs Paxos2025 model.
 
 For each eval dataset (2020 / 2025) this picks --n random frames from the val splits
 (the fold is chosen randomly per frame), runs both single-dataset models
 (seg_2020_fold_<f>.pth and seg_2025_fold_<f>.pth of that fold) on the frame, and
-writes one PNG per dataset with one row per frame:
-    frame | ground-truth mask | 2020-model prediction (IoU) | 2025-model prediction (IoU)
+writes one PNG per dataset with one row per frame and three panels of EQUAL size:
+    ground-truth mask | 2020-model mask (IoU) | 2025-model mask (IoU)
+
+Each panel shows only the lens: all three masks are cropped to one common square
+window at native resolution (side = largest dimension of the three masks, centered
+on their joint bounding box) -- no resizing, no skewing, no overlay -- so the masks
+can be compared pixel by pixel.
 
 Outputs: <out_dir>/vis_compare_2020.png, <out_dir>/vis_compare_2025.png
 
@@ -42,7 +47,31 @@ def build_gt_mask(row, h, w):
     mask = np.zeros((h, w), dtype=np.uint8)
     cv2.ellipse(mask, (int(row["center_x"]), int(row["center_y"])),
                 (int(row["radius_x"]), int(row["radius_y"])), 0, 0, 360, 1, -1)
-    return mask
+    return mask > 0
+
+
+def bbox(mask):
+    ys, xs = np.nonzero(mask)
+    if len(ys) == 0:
+        return None
+    return ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+
+
+def common_square_window(masks, h, w):
+    """One square window shared by all masks: side = largest bbox dimension of the
+    three masks, centered on their joint bounding box, clamped to the image."""
+    boxes = [b for b in (bbox(m) for m in masks) if b is not None]
+    if not boxes:
+        side = min(h, w)
+        cy, cx = h // 2, w // 2
+    else:
+        side = max(max(b[1] - b[0], b[3] - b[2]) for b in boxes)
+        side = min(side, h, w)
+        cy = (min(b[0] for b in boxes) + max(b[1] for b in boxes)) // 2
+        cx = (min(b[2] for b in boxes) + max(b[3] for b in boxes)) // 2
+    r0 = min(max(cy - side // 2, 0), h - side)
+    c0 = min(max(cx - side // 2, 0), w - side)
+    return r0, c0, side
 
 
 def iou(pred, gt, eps=1e-7):
@@ -56,7 +85,7 @@ def main():
     parser.add_argument("--ann_dir", type=str, default="cropping")
     parser.add_argument("--img_dir", type=str, default="cropping/frames_to_annotate_larger")
     parser.add_argument("--out_dir", type=str, default="cropping/eval_xdomain")
-    parser.add_argument("--img_size", type=int, default=768)
+    parser.add_argument("--img_size", type=int, default=768, help="model input size (as trained)")
     parser.add_argument("--encoder_name", type=str, default="efficientnet-b4")
     parser.add_argument("--n", type=int, default=15, help="frames per eval dataset")
     parser.add_argument("--seed", type=int, default=42)
@@ -108,41 +137,43 @@ def main():
             h, w = img.shape[:2]
             gt = build_gt_mask(row, h, w)
             inp = transform(image=img)["image"].unsqueeze(0).to(device)
-            gt_r = cv2.resize(gt, (args.img_size, args.img_size), interpolation=cv2.INTER_NEAREST) > 0
             preds = {}
             with torch.no_grad():
                 for cfg in args.configs:
                     out = models[(cfg, fold)](inp)
-                    preds[cfg] = (torch.sigmoid(out)[0, 0] > 0.5).cpu().numpy()
-            rows.append((fn, fold, img, gt_r, preds))
+                    p = (torch.sigmoid(out)[0, 0] > 0.5).cpu().numpy()
+                    # back to native resolution (nearest) so masks are pixel-comparable
+                    preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+            r0, c0, side = common_square_window([gt] + list(preds.values()), h, w)
+            crops = {"gt": gt[r0:r0 + side, c0:c0 + side]}
+            for cfg in args.configs:
+                crops[cfg] = preds[cfg][r0:r0 + side, c0:c0 + side]
+            rows.append((fn, fold, side, crops))
 
         if not rows:
             print(f"eval_ds={eval_ds}: nothing to plot (missing models/images)")
             continue
 
         n = len(rows)
-        fig, axes = plt.subplots(n, 2 + len(args.configs), figsize=(4.2 * (2 + len(args.configs)), 2.6 * n))
+        ncols = 1 + len(args.configs)
+        fig, axes = plt.subplots(n, ncols, figsize=(4.5 * ncols, 4.2 * n))
         if n == 1:
             axes = axes[None, :]
-        col_titles = ["frame", "ground truth"] + [f"model {c} (IoU)" for c in args.configs]
-        for j, t in enumerate(col_titles):
-            axes[0, j].set_title(t, fontsize=11)
-        for i, (fn, fold, img, gt_r, preds) in enumerate(rows):
-            img_r = cv2.resize(img, (args.img_size, args.img_size))
-            axes[i, 0].imshow(img_r)
-            axes[i, 0].set_ylabel(f"{fn[:38]}\nfold {fold}", fontsize=7)
-            axes[i, 1].imshow(img_r)
-            axes[i, 1].imshow(np.ma.masked_where(~gt_r, gt_r), cmap="Greens", alpha=0.45)
+        axes[0, 0].set_title("ground truth", fontsize=11)
+        for j, cfg in enumerate(args.configs):
+            axes[0, 1 + j].set_title(f"model {cfg}", fontsize=11)
+        for i, (fn, fold, side, crops) in enumerate(rows):
+            axes[i, 0].set_ylabel(f"{fn[:36]}\nfold {fold}, {side}px", fontsize=7)
+            axes[i, 0].imshow(crops["gt"], cmap="gray", interpolation="nearest")
             for j, cfg in enumerate(args.configs):
-                p = preds[cfg]
-                axes[i, 2 + j].imshow(img_r)
-                axes[i, 2 + j].imshow(np.ma.masked_where(~p, p), cmap="Reds", alpha=0.45)
-                axes[i, 2 + j].set_title(f"IoU {iou(p, gt_r):.3f}", fontsize=9)
+                ax = axes[i, 1 + j]
+                ax.imshow(crops[cfg], cmap="gray", interpolation="nearest")
+                ax.set_title(f"IoU {iou(crops[cfg], crops['gt']):.3f}", fontsize=9)
             for ax in axes[i]:
                 ax.set_xticks([])
                 ax.set_yticks([])
-        fig.suptitle(f"Cropping models {args.configs[0]} vs {args.configs[1]} on Paxos{eval_ds} val frames "
-                     f"(random fold per frame; red = predicted mask, green = ground truth)")
+        fig.suptitle(f"Cropping masks: model {args.configs[0]} vs model {args.configs[1]} on Paxos{eval_ds} "
+                     f"val frames (random fold per frame; white = mask; every row uses one common square window, no resize)")
         fig.tight_layout(rect=[0, 0, 1, 0.99])
         out_path = out_dir / f"vis_compare_{eval_ds}.png"
         fig.savefig(out_path, dpi=120)
