@@ -3,15 +3,15 @@
 For each eval dataset (2020 / 2025) this picks --n random frames from the val splits
 (the fold is chosen randomly per frame), runs both single-dataset models
 (seg_2020_fold_<f>.pth and seg_2025_fold_<f>.pth of that fold) on the frame, and
-writes one PNG per dataset. Each row has FOUR panels of equal size:
+writes one PNG per dataset. Each row has THREE panels of equal size:
 
-    RGB + ground-truth mask | RGB + 2020-model mask (IoU) | RGB + 2025-model mask (IoU)
-    | difference map (green = both models, blue = only 2020, red = only 2025)
+    ground-truth region | 2020-model predicted region (IoU) | 2025-model predicted region (IoU)
 
+Inside the mask the RGB pixels of the frame are shown, everything outside is black.
 All panels of a row are cropped to ONE common square window at native resolution
 (side = largest bbox dimension of the three masks, centered on their joint bbox,
-clamped to the image) -- no resizing, no skewing -- so masks are pixel-comparable.
-Predictions are mapped back to native frame resolution (nearest neighbor) first.
+clamped to the image) -- no resizing, no skewing -- so the regions are
+pixel-comparable. Predictions are mapped back to native frame resolution first.
 
 Outputs: <out_dir>/vis_compare_2020.png, <out_dir>/vis_compare_2025.png
 
@@ -36,11 +36,6 @@ import pandas as pd
 import torch
 import segmentation_models_pytorch as smp
 from albumentations.pytorch import ToTensorV2
-from matplotlib.colors import ListedColormap
-
-GT_COLOR = "lime"
-PRED_COLORS = ["dodgerblue", "red", "darkorange", "purple"]
-
 
 def get_val_transform(img_size):
     return albu.Compose([
@@ -83,18 +78,6 @@ def common_square_window(masks, h, w):
 def iou(a, b, eps=1e-7):
     inter = (a & b).sum()
     return inter / (a.sum() + b.sum() - inter + eps)
-
-
-def diff_panel(rgb, p1, p2):
-    """RGB dimmed; mask pixels colored: green=both, blue=only p1, red=only p2."""
-    out = rgb.astype(np.float32) * 0.35
-    both = p1 & p2
-    only1 = p1 & ~p2
-    only2 = p2 & ~p1
-    out[both] = (0.45, 1.0, 0.45)
-    out[only1] = (0.35, 0.65, 1.0)
-    out[only2] = (1.0, 0.35, 0.35)
-    return np.clip(out, 0, 255).astype(np.uint8)
 
 
 def load_model(path, encoder_name, device):
@@ -176,32 +159,24 @@ def main():
             continue
 
         n = len(rows)
-        fig, axes = plt.subplots(n, 4, figsize=(5.0 * 4, 4.6 * n))
+        fig, axes = plt.subplots(n, 3, figsize=(5.2 * 3, 4.8 * n))
         if n == 1:
             axes = axes[None, :]
-        for j, t in enumerate(["ground truth", f"model {c1}", f"model {c2}", f"diff {c1} vs {c2}"]):
-            axes[0, j].set_title(t, fontsize=12, pad=8)
         for i, r in enumerate(rows):
             axes[i, 0].set_ylabel("\n".join(textwrap.wrap(r["fn"], 32)) + f"\nfold {r['fold']} | {r['side']}px",
-                                  fontsize=8)
+                                  fontsize=9)
             for ax in axes[i]:
                 ax.set_xticks([])
                 ax.set_yticks([])
-            axes[i, 0].imshow(r["rgb"], interpolation="nearest")
-            axes[i, 0].imshow(np.ma.masked_where(~r["gt"], r["gt"]),
-                              cmap=ListedColormap(["none", GT_COLOR]), alpha=0.55, interpolation="nearest")
-            axes[i, 1].imshow(r["rgb"], interpolation="nearest")
-            axes[i, 1].imshow(np.ma.masked_where(~r["p1"], r["p1"]),
-                              cmap=ListedColormap(["none", PRED_COLORS[0]]), alpha=0.55, interpolation="nearest")
-            axes[i, 1].set_title(f"IoU {iou(r['p1'], r['gt']):.3f}", fontsize=11)
-            axes[i, 2].imshow(r["rgb"], interpolation="nearest")
-            axes[i, 2].imshow(np.ma.masked_where(~r["p2"], r["p2"]),
-                              cmap=ListedColormap(["none", PRED_COLORS[1]]), alpha=0.55, interpolation="nearest")
-            axes[i, 2].set_title(f"IoU {iou(r['p2'], r['gt']):.3f}", fontsize=11)
-            axes[i, 3].imshow(diff_panel(r["rgb"], r["p1"], r["p2"]), interpolation="nearest")
-            axes[i, 3].set_title("green=both, blue=2020 only, red=2025 only", fontsize=9)
+            for j, (key, title) in enumerate([("gt", "ground truth"),
+                                              ("p1", f"model {c1} | IoU {iou(r['p1'], r['gt']):.3f}"),
+                                              ("p2", f"model {c2} | IoU {iou(r['p2'], r['gt']):.3f}")]):
+                ax = axes[i, j]
+                masked = np.where(r[key][..., None], r["rgb"], 0)  # RGB inside mask, black outside
+                ax.imshow(masked, interpolation="nearest")
+                ax.set_title(title, fontsize=12, pad=6)
         fig.suptitle(f"Cropping on Paxos{eval_ds} val frames: model {c1} vs model {c2} "
-                     f"(random fold per frame; RGB under mask; one common square window per row, no resize)",
+                     f"(random fold per frame; RGB inside mask, black outside; one common square window per row, no resize)",
                      fontsize=14)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_path = out_dir / f"vis_compare_{eval_ds}.png"
