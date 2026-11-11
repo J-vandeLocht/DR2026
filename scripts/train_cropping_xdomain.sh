@@ -31,6 +31,9 @@ IMG_DIR=${IMG_DIR:-cropping/frames_to_annotate_larger}
 ANN_DIR=${ANN_DIR:-cropping}
 OUT_DIR=${OUT_DIR:-cropping/models_xdomain}
 PATIENCE=${PATIENCE:-3}   # early stopping: epochs without val IoU improvement before stopping
+BATCH_SIZE=${BATCH_SIZE:-8}     # raise (16/32) if the GPU has headroom; A100 + AMP fits easily
+NUM_WORKERS=${NUM_WORKERS:-16}
+IMG_SIZE=${IMG_SIZE:-768}
 
 for cfg in $CONFIGS; do
   if [ "$cfg" = "both" ]; then epochs=$BASE_EPOCHS; else epochs=$((2 * BASE_EPOCHS)); fi
@@ -38,7 +41,8 @@ for cfg in $CONFIGS; do
     echo "=== train dataset=$cfg fold=$fold epochs=$epochs ==="
     python -u -m cropping.train_segmentation \
       --dataset "$cfg" --fold "$fold" --epochs "$epochs" \
-      --img_dir "$IMG_DIR" --ann_dir "$ANN_DIR" --out_dir "$OUT_DIR" --patience "$PATIENCE"
+      --img_dir "$IMG_DIR" --ann_dir "$ANN_DIR" --out_dir "$OUT_DIR" --patience "$PATIENCE" \
+      --batch_size "$BATCH_SIZE" --num_workers "$NUM_WORKERS" --img_size "$IMG_SIZE" --amp
   done
 done
 

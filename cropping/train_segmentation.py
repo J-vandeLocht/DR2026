@@ -63,6 +63,8 @@ def main():
     parser.add_argument("--patience", type=int, default=3,
                         help="Early stopping: stop after this many epochs without val IoU improvement.")
     parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--amp", action="store_true",
+                        help="Mixed precision (autocast + GradScaler); big speedup on A100 tensor cores.")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--img_size", type=int, default=768)
     parser.add_argument("--seed", type=int, default=42)
@@ -76,6 +78,9 @@ def main():
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    use_amp = args.amp and device.type == "cuda"
+    if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True
     seed_everything(args.seed)
 
     out_dir = Path(args.out_dir)
@@ -86,8 +91,11 @@ def main():
 
     train_ds = FundusDataset(train_df, args.img_dir, get_transforms(train=True, img_size=args.img_size))
     val_ds = FundusDataset(val_df, args.img_dir, get_transforms(train=False, img_size=args.img_size))
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    pin = device.type == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers,
+                              pin_memory=pin)
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers,
+                            pin_memory=pin)
 
     encoder_weights = None if args.encoder_weights.lower() == "none" else args.encoder_weights
     model = smp.UnetPlusPlus(
@@ -99,6 +107,7 @@ def main():
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, from_logits=True)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
     model_save_path = out_dir / f"seg_{args.dataset}_fold_{args.fold}.pth"
     log_path = out_dir / f"seg_{args.dataset}_fold_{args.fold}_log.json"
@@ -114,15 +123,17 @@ def main():
         for imgs, masks in train_loader:
             imgs, masks = imgs.to(device), masks.to(device)
             optimizer.zero_grad()
-            output = model(imgs)
-            loss = loss_fn(output, masks)
-            loss.backward()
-            optimizer.step()
+            with torch.autocast(device_type="cuda", enabled=use_amp):
+                output = model(imgs)
+                loss = loss_fn(output, masks)
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
             train_loss.append(loss.item())
 
         model.eval()
         tp, fp, fn, tn = 0, 0, 0, 0
-        with torch.no_grad():
+        with torch.no_grad(), torch.autocast(device_type="cuda", enabled=use_amp):
             for imgs, masks in val_loader:
                 imgs, masks = imgs.to(device), masks.to(device)
                 output = model(imgs)
