@@ -7,14 +7,13 @@
 #SBATCH --cpus-per-task=8
 
 # Cross-dataset cropping experiment: train the Unet++ (B4) segmentation model for
-# configs 2020 / 2025 / both, each over 5 folds (splits from cropping/make_splits.py).
+# configs 2020 / 2025 / both, each over 5 folds (splits from cropping/make_splits_simple.py).
 # Single-dataset runs train for double the epochs of the 'both' runs (the two
 # cohorts are about the same size): BASE_EPOCHS for 'both', 2*BASE_EPOCHS otherwise.
 #
 # Prerequisites (run from the repo root first):
 #   python -u -m cropping.make_dataset_annotations --video_dir_2025 <path 2025 videos> --video_dir_2020 <path 2020 videos>
-#   python -u -m cropping.make_splits_simple   # video/subject-level folds (no grading sheet needed;
-#                                               # use cropping.make_splits for Eye_ID-based patient folds)
+#   python -u -m cropping.make_splits_simple   # video/subject-level folds (no DR grades involved)
 # and the annotated frames must exist in cropping/frames_to_annotate_larger/.
 #
 # Usage: sbatch scripts/train_cropping_xdomain.sh

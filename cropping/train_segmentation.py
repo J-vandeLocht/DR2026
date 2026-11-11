@@ -1,7 +1,7 @@
 """Train the fundus-cropping segmentation model (Unet++ / EfficientNet-B4) for the
 cross-dataset experiment: one run per dataset combo (2020 / 2025 / both) and fold.
 
-Splits come from cropping/splits_<year>.json (cropping/make_splits.py). For
+Splits come from cropping/splits_<year>.json (cropping/make_splits_simple.py). For
 --dataset both, fold i of 2020 and fold i of 2025 are merged (train = train_2020 +
 train_2025, val = val_2020 + val_2025). Single-dataset runs should use double the
 epochs of 'both' runs (the cohorts are about the same size) -- scripts/
