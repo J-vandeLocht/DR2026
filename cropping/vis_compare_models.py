@@ -1,16 +1,17 @@
-"""Side-by-side pixel-wise comparison of the cropping masks: Paxos2020 vs Paxos2025 model.
+"""Side-by-side comparison of the cropping models trained on Paxos2020 vs Paxos2025.
 
 For each eval dataset (2020 / 2025) this picks --n random frames from the val splits
 (the fold is chosen randomly per frame), runs both single-dataset models
 (seg_2020_fold_<f>.pth and seg_2025_fold_<f>.pth of that fold) on the frame, and
-writes one PNG per dataset with one row per frame and three panels of EQUAL size:
-    ground-truth mask | 2020-model mask (IoU) | 2025-model mask (IoU)
+writes one PNG per dataset. Each row has FOUR panels of equal size:
 
-Each panel shows only the lens: the RGB frame under a transparent colored mask
-(green = ground truth, blue/red = the two models). All three panels of a row are
-cropped to one common square window at native resolution (side = largest dimension
-of the three masks, centered on their joint bounding box) -- no resizing, no
-skewing -- so the masks can be compared pixel by pixel.
+    RGB + ground-truth mask | RGB + 2020-model mask (IoU) | RGB + 2025-model mask (IoU)
+    | difference map (green = both models, blue = only 2020, red = only 2025)
+
+All panels of a row are cropped to ONE common square window at native resolution
+(side = largest bbox dimension of the three masks, centered on their joint bbox,
+clamped to the image) -- no resizing, no skewing -- so masks are pixel-comparable.
+Predictions are mapped back to native frame resolution (nearest neighbor) first.
 
 Outputs: <out_dir>/vis_compare_2020.png, <out_dir>/vis_compare_2025.png
 
@@ -21,21 +22,24 @@ Run from the repo root:
 import argparse
 import json
 import random
+import textwrap
 from pathlib import Path
 
+import albumentations as albu
 import cv2
 import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import textwrap
-from matplotlib.colors import ListedColormap
 import numpy as np
 import pandas as pd
 import torch
 import segmentation_models_pytorch as smp
-import albumentations as albu
 from albumentations.pytorch import ToTensorV2
+from matplotlib.colors import ListedColormap
+
+GT_COLOR = "lime"
+PRED_COLORS = ["dodgerblue", "red", "darkorange", "purple"]
 
 
 def get_val_transform(img_size):
@@ -61,15 +65,14 @@ def bbox(mask):
 
 
 def common_square_window(masks, h, w):
-    """One square window shared by all masks: side = largest bbox dimension of the
-    three masks, centered on their joint bounding box, clamped to the image."""
+    """One square window shared by all panels: side = largest bbox dimension among
+    the masks, centered on their joint bounding box, clamped to the image."""
     boxes = [b for b in (bbox(m) for m in masks) if b is not None]
     if not boxes:
         side = min(h, w)
         cy, cx = h // 2, w // 2
     else:
-        side = max(max(b[1] - b[0], b[3] - b[2]) for b in boxes)
-        side = min(side, h, w)
+        side = min(max(max(b[1] - b[0], b[3] - b[2]) for b in boxes), h, w)
         cy = (min(b[0] for b in boxes) + max(b[1] for b in boxes)) // 2
         cx = (min(b[2] for b in boxes) + max(b[3] for b in boxes)) // 2
     r0 = min(max(cy - side // 2, 0), h - side)
@@ -77,9 +80,28 @@ def common_square_window(masks, h, w):
     return r0, c0, side
 
 
-def iou(pred, gt, eps=1e-7):
-    inter = (pred & gt).sum()
-    return inter / (pred.sum() + gt.sum() - inter + eps)
+def iou(a, b, eps=1e-7):
+    inter = (a & b).sum()
+    return inter / (a.sum() + b.sum() - inter + eps)
+
+
+def diff_panel(rgb, p1, p2):
+    """RGB dimmed; mask pixels colored: green=both, blue=only p1, red=only p2."""
+    out = rgb.astype(np.float32) * 0.35
+    both = p1 & p2
+    only1 = p1 & ~p2
+    only2 = p2 & ~p1
+    out[both] = (0.45, 1.0, 0.45)
+    out[only1] = (0.35, 0.65, 1.0)
+    out[only2] = (1.0, 0.35, 0.35)
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+def load_model(path, encoder_name, device):
+    model = smp.UnetPlusPlus(encoder_name=encoder_name, encoder_weights=None,
+                             in_channels=3, classes=1).to(device).eval()
+    model.load_state_dict(torch.load(path, map_location=device))
+    return model
 
 
 def main():
@@ -103,86 +125,83 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     transform = get_val_transform(args.img_size)
     rng = random.Random(args.seed)
+    assert len(args.configs) == 2, "exactly two models are compared (--configs)"
+    c1, c2 = args.configs
 
     for eval_ds in args.eval_datasets:
-        ann_csv = Path(args.ann_dir) / f"annotations_cropping_{eval_ds}.csv"
-        splits_path = Path(args.ann_dir) / f"splits_{eval_ds}.json"
-        df = pd.read_csv(ann_csv).set_index("filename")
-        with open(splits_path) as f:
+        df = pd.read_csv(Path(args.ann_dir) / f"annotations_cropping_{eval_ds}.csv").set_index("filename")
+        with open(Path(args.ann_dir) / f"splits_{eval_ds}.json") as f:
             splits = json.load(f)
-
         candidates = [(fold, fn) for fold in range(args.n_splits) for fn in splits[f"fold_{fold}"]["val"]]
         picks = rng.sample(candidates, min(args.n, len(candidates)))
 
         models = {}
         for fold, _ in picks:
             for cfg in args.configs:
-                if (cfg, fold) in models:
-                    continue
-                path = Path(args.models_dir) / f"seg_{cfg}_fold_{fold}.pth"
-                if not path.exists():
-                    print(f"WARNING: missing {path} -- those frames will be skipped")
-                    continue
-                m = smp.UnetPlusPlus(encoder_name=args.encoder_name, encoder_weights=None,
-                                     in_channels=3, classes=1).to(device).eval()
-                m.load_state_dict(torch.load(path, map_location=device))
-                models[(cfg, fold)] = m
+                if (cfg, fold) not in models:
+                    path = Path(args.models_dir) / f"seg_{cfg}_fold_{fold}.pth"
+                    if not path.exists():
+                        print(f"WARNING: missing {path}")
+                        continue
+                    models[(cfg, fold)] = load_model(path, args.encoder_name, device)
 
         rows = []
         for fold, fn in picks:
-            if any((cfg, fold) not in models for cfg in args.configs):
+            if (c1, fold) not in models or (c2, fold) not in models:
                 continue
-            row = df.loc[fn]
             img_bgr = cv2.imread(str(Path(args.img_dir) / fn))
             if img_bgr is None:
                 print(f"WARNING: cannot read {args.img_dir}/{fn} -- skipped")
                 continue
             img = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
             h, w = img.shape[:2]
-            gt = build_gt_mask(row, h, w)
+            gt = build_gt_mask(df.loc[fn], h, w)
             inp = transform(image=img)["image"].unsqueeze(0).to(device)
             preds = {}
             with torch.no_grad():
-                for cfg in args.configs:
-                    out = models[(cfg, fold)](inp)
-                    p = (torch.sigmoid(out)[0, 0] > 0.5).cpu().numpy()
-                    # back to native resolution (nearest) so masks are pixel-comparable
+                for cfg in (c1, c2):
+                    p = (torch.sigmoid(models[(cfg, fold)](inp))[0, 0] > 0.5).cpu().numpy()
                     preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
-            r0, c0, side = common_square_window([gt] + list(preds.values()), h, w)
-            crops = {"rgb": img[r0:r0 + side, c0:c0 + side], "gt": gt[r0:r0 + side, c0:c0 + side]}
-            for cfg in args.configs:
-                crops[cfg] = preds[cfg][r0:r0 + side, c0:c0 + side]
-            rows.append((fn, fold, side, crops))
+            r0, c0, side = common_square_window([gt, preds[c1], preds[c2]], h, w)
+            rows.append({
+                "fn": fn, "fold": fold, "side": side,
+                "rgb": img[r0:r0 + side, c0:c0 + side],
+                "gt": gt[r0:r0 + side, c0:c0 + side],
+                "p1": preds[c1][r0:r0 + side, c0:c0 + side],
+                "p2": preds[c2][r0:r0 + side, c0:c0 + side],
+            })
 
         if not rows:
             print(f"eval_ds={eval_ds}: nothing to plot (missing models/images)")
             continue
 
         n = len(rows)
-        ncols = 1 + len(args.configs)
-        fig, axes = plt.subplots(n, ncols, figsize=(5.2 * ncols, 4.8 * n))
+        fig, axes = plt.subplots(n, 4, figsize=(5.0 * 4, 4.6 * n))
         if n == 1:
             axes = axes[None, :]
-        mask_cmaps = {"gt": ListedColormap(["none", "lime"])}
-        pred_colors = ["dodgerblue", "red", "darkorange", "purple"]
-        for j, cfg in enumerate(args.configs):
-            mask_cmaps[cfg] = ListedColormap(["none", pred_colors[j % len(pred_colors)]])
-        for j, t in enumerate(["ground truth"] + [f"model {cfg}" for cfg in args.configs]):
+        for j, t in enumerate(["ground truth", f"model {c1}", f"model {c2}", f"diff {c1} vs {c2}"]):
             axes[0, j].set_title(t, fontsize=12, pad=8)
-        for i, (fn, fold, side, crops) in enumerate(rows):
-            axes[i, 0].set_ylabel("\n".join(textwrap.wrap(fn, 32)) + f"\nfold {fold} | {side}px", fontsize=8)
-            for j, key in enumerate(["gt"] + args.configs):
-                ax = axes[i, j]
-                ax.imshow(crops["rgb"], interpolation="nearest")
-                m = crops[key]
-                ax.imshow(np.ma.masked_where(~m, m), cmap=mask_cmaps[key], alpha=0.5,
-                          interpolation="nearest")
-                if key != "gt":
-                    ax.set_title(f"IoU {iou(crops[key], crops['gt']):.3f}", fontsize=11)
+        for i, r in enumerate(rows):
+            axes[i, 0].set_ylabel("\n".join(textwrap.wrap(r["fn"], 32)) + f"\nfold {r['fold']} | {r['side']}px",
+                                  fontsize=8)
+            for ax in axes[i]:
                 ax.set_xticks([])
                 ax.set_yticks([])
-        fig.suptitle(f"Cropping: model {args.configs[0]} vs model {args.configs[1]} on Paxos{eval_ds} val frames "
-                     f"(random fold per frame; RGB frame under mask; one common square window per row, no resize)",
+            axes[i, 0].imshow(r["rgb"], interpolation="nearest")
+            axes[i, 0].imshow(np.ma.masked_where(~r["gt"], r["gt"]),
+                              cmap=ListedColormap(["none", GT_COLOR]), alpha=0.55, interpolation="nearest")
+            axes[i, 1].imshow(r["rgb"], interpolation="nearest")
+            axes[i, 1].imshow(np.ma.masked_where(~r["p1"], r["p1"]),
+                              cmap=ListedColormap(["none", PRED_COLORS[0]]), alpha=0.55, interpolation="nearest")
+            axes[i, 1].set_title(f"IoU {iou(r['p1'], r['gt']):.3f}", fontsize=11)
+            axes[i, 2].imshow(r["rgb"], interpolation="nearest")
+            axes[i, 2].imshow(np.ma.masked_where(~r["p2"], r["p2"]),
+                              cmap=ListedColormap(["none", PRED_COLORS[1]]), alpha=0.55, interpolation="nearest")
+            axes[i, 2].set_title(f"IoU {iou(r['p2'], r['gt']):.3f}", fontsize=11)
+            axes[i, 3].imshow(diff_panel(r["rgb"], r["p1"], r["p2"]), interpolation="nearest")
+            axes[i, 3].set_title("green=both, blue=2020 only, red=2025 only", fontsize=9)
+        fig.suptitle(f"Cropping on Paxos{eval_ds} val frames: model {c1} vs model {c2} "
+                     f"(random fold per frame; RGB under mask; one common square window per row, no resize)",
                      fontsize=14)
         fig.tight_layout(rect=[0, 0, 1, 0.97])
         out_path = out_dir / f"vis_compare_{eval_ds}.png"
