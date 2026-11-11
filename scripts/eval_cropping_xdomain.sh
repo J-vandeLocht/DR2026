@@ -16,7 +16,6 @@
 
 source ~/.bashrc
 conda activate job_new
-cd "$(dirname "$0")/.."
 
 python -u -m cropping.evaluate_segmentation \
   --models_dir cropping/models_xdomain \
