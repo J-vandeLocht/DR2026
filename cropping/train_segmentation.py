@@ -60,6 +60,8 @@ def main():
     parser.add_argument("--dataset", choices=["2020", "2025", "both"], default="both")
     parser.add_argument("--fold", type=int, default=0, help="Fold index 0..4 (its val part is held out).")
     parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--patience", type=int, default=3,
+                        help="Early stopping: stop after this many epochs without val IoU improvement.")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--img_size", type=int, default=768)
@@ -102,6 +104,8 @@ def main():
     log_path = out_dir / f"seg_{args.dataset}_fold_{args.fold}_log.json"
 
     best_iou = -1.0  # guarantees a checkpoint is saved even if val IoU stays 0
+    best_epoch = -1
+    stopped_early = False
     log = []
     for epoch in range(args.epochs):
         model.train()
@@ -137,13 +141,22 @@ def main():
 
         if iou > best_iou:
             best_iou = iou
+            best_epoch = epoch
             torch.save(model.state_dict(), model_save_path)
             print(f"   -> New Best IoU! Saved {model_save_path}")
 
+        if epoch - best_epoch >= args.patience:
+            stopped_early = True
+            print(f"   -> Early stopping: no val IoU improvement for {args.patience} epochs "
+                  f"(best {best_iou:.4f} at epoch {best_epoch + 1})")
+            break
+
     with open(log_path, "w") as f:
         json.dump({"dataset": args.dataset, "fold": args.fold, "epochs": args.epochs,
-                   "best_val_iou": best_iou, "history": log}, f, indent=2)
-    print(f"Finished dataset={args.dataset} fold={args.fold}. Best Val IoU: {best_iou:.4f}")
+                   "epochs_run": len(log), "stopped_early": stopped_early,
+                   "best_epoch": best_epoch, "best_val_iou": best_iou, "history": log}, f, indent=2)
+    print(f"Finished dataset={args.dataset} fold={args.fold} after {len(log)}/{args.epochs} epochs. "
+          f"Best Val IoU: {best_iou:.4f} (epoch {best_epoch + 1})")
 
 
 if __name__ == "__main__":

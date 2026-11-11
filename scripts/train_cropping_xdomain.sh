@@ -30,6 +30,7 @@ FOLDS=${FOLDS:-"0 1 2 3 4"}
 IMG_DIR=${IMG_DIR:-cropping/frames_to_annotate_larger}
 ANN_DIR=${ANN_DIR:-cropping}
 OUT_DIR=${OUT_DIR:-cropping/models_xdomain}
+PATIENCE=${PATIENCE:-3}   # early stopping: epochs without val IoU improvement before stopping
 
 for cfg in $CONFIGS; do
   if [ "$cfg" = "both" ]; then epochs=$BASE_EPOCHS; else epochs=$((2 * BASE_EPOCHS)); fi
@@ -37,7 +38,7 @@ for cfg in $CONFIGS; do
     echo "=== train dataset=$cfg fold=$fold epochs=$epochs ==="
     python -u -m cropping.train_segmentation \
       --dataset "$cfg" --fold "$fold" --epochs "$epochs" \
-      --img_dir "$IMG_DIR" --ann_dir "$ANN_DIR" --out_dir "$OUT_DIR"
+      --img_dir "$IMG_DIR" --ann_dir "$ANN_DIR" --out_dir "$OUT_DIR" --patience "$PATIENCE"
   done
 done
 
