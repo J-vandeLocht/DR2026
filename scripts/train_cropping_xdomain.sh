@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --partition=A40short
-#SBATCH --time=08:00:00
+#SBATCH --partition=A100devel
+#SBATCH --time=01:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=32
 
 # Cross-dataset cropping experiment: train the Unet++ (B4) segmentation model for
 # configs 2020 / 2025 / both, each over 5 folds (splits from cropping/make_splits_simple.py).
@@ -23,7 +23,6 @@
 
 source ~/.bashrc
 conda activate job_new
-cd "$(dirname "$0")/.."
 
 CONFIGS=${CONFIGS:-"2020 2025 both"}
 BASE_EPOCHS=${BASE_EPOCHS:-20}

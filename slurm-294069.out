@@ -1,0 +1,8 @@
+=== train dataset=2020 fold=0 epochs=40 ===
+dataset=2020 fold=0: 272 train / 69 val frames
+dataset=2020 Fold 0 | Epoch 1/40 | Train Loss: 0.5978 | Val IoU: 0.5973
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 2/40 | Train Loss: 0.3370 | Val IoU: 0.9388
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
+dataset=2020 Fold 0 | Epoch 3/40 | Train Loss: 0.1978 | Val IoU: 0.9629
+   -> New Best IoU! Saved cropping/models_xdomain/seg_2020_fold_0.pth
