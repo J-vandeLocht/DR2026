@@ -164,7 +164,7 @@ def main():
     print(f"Wrote {out_dir / 'bar_summary.csv'}")
 
     # Plot: 3 subplots (one per metric), 6 bars each, 5 fold points overlaid
-    fig, axes = plt.subplots(1, len(METRICS), figsize=(6 * len(METRICS), 5.5), sharey=False)
+    fig, axes = plt.subplots(1, len(METRICS), figsize=(8.5 * len(METRICS), 7), sharey=False)
     bar_labels, bar_colors = [], []
     palette = {"2020": "#4C72B0", "2025": "#DD8452", "both": "#55A868"}
     for ax, m in zip(axes, METRICS):
@@ -180,14 +180,15 @@ def main():
                 jitter = np.linspace(-0.18, 0.18, len(vals)) if len(vals) else []
                 ax.scatter(np.full(len(vals), x) + jitter, vals, color="black", zorder=5, s=28)
                 for xi, v in zip(np.full(len(vals), x) + jitter, vals):
-                    ax.annotate(f"{v:.3f}", (xi, v), textcoords="offset points", xytext=(0, 6),
-                                ha="center", fontsize=7)
+                    ax.annotate(f"{v:.3f}", (xi, v), textcoords="offset points", xytext=(0, 7),
+                                ha="center", fontsize=9)
                 labels.append(f"{config}→{eval_ds}")
                 x += 1
         ax.set_xticks(range(len(labels)))
-        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_xticklabels(labels, rotation=20, ha="right", fontsize=11)
         ax.set_title(METRIC_TITLES[m])
-        ax.set_ylim(0, 1.05)
+        ax.set_ylim(0, 1.12)
+        ax.tick_params(axis="y", labelsize=10)
         ax.grid(axis="y", alpha=0.3)
         ax.set_ylabel("micro " + METRIC_TITLES[m])
     # legend for train config colors
@@ -198,7 +199,7 @@ def main():
                  "points: individual folds\n(each model evaluated on the fold-i val split of both datasets)")
     fig.tight_layout(rect=[0, 0, 0.9, 0.93])
     plot_path = out_dir / "segmentation_eval.png"
-    fig.savefig(plot_path, dpi=150)
+    fig.savefig(plot_path, dpi=170)
     plt.close(fig)
     print(f"Wrote {plot_path}")
 
