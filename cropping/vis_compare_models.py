@@ -164,11 +164,17 @@ def main():
             p_same = cv2.resize(p_same.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
 
             ens = None
+            ens_ious = []
             if use_ensemble:
                 with torch.no_grad():
-                    probs = torch.stack([torch.sigmoid(m(inp)) for m in ens_models]).mean(dim=0)
-                ep = (probs[0, 0] > 0.5).cpu().numpy()
+                    members = [torch.sigmoid(m(inp))[0, 0] for m in ens_models]
+                    probs = torch.stack(members).mean(dim=0)
+                ep = (probs > 0.5).cpu().numpy()
                 ens = cv2.resize(ep.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+                for mp in members:
+                    m_native = cv2.resize((mp > 0.5).cpu().numpy().astype(np.uint8), (w, h),
+                                          interpolation=cv2.INTER_NEAREST) > 0
+                    ens_ious.append(iou(m_native, gt))
 
             window_masks = [gt, p_same] + ([ens] if ens is not None else [])
             r0, c0, side = common_square_window(window_masks, h, w)
@@ -181,6 +187,9 @@ def main():
                       ("same", f"model {eval_ds} (fold {fold}) | IoU {iou(crops['same'], crops['gt']):.3f}")]
             if ens is not None:
                 panels.append(("ens", f"ensemble {cross} ({args.n_splits}-fold prob) | IoU {iou(crops['ens'], crops['gt']):.3f}"))
+                print(f"  {fn} fold {fold}: same-model IoU {iou(crops['same'], crops['gt']):.3f} | "
+                      f"ensemble members IoU {[round(float(x), 3) for x in ens_ious]} | "
+                      f"ensemble IoU {iou(crops['ens'], crops['gt']):.3f}")
 
             fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 5.6))
             axes[0].set_ylabel("\n".join(textwrap.wrap(fn, 34)) + f"\nfold {fold} | {side}px", fontsize=11)
