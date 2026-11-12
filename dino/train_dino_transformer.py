@@ -51,6 +51,7 @@ class DinoSelfAttention(BagTransformer):
             full_checkpoint_path=None,
             backbone="dinov3",
             backbone_img_size=224,
+            backbone_weights=None,
     ):
         super().__init__()
 
@@ -59,7 +60,7 @@ class DinoSelfAttention(BagTransformer):
                 "Specify either classifier_checkpoint_path or full_checkpoint_path, not both."
             )
 
-        self.backbone = load_backbone(backbone, backbone_img_size)
+        self.backbone = load_backbone(backbone, backbone_img_size, backbone_weights)
         self.dense_adapter = dense_adapter
         if dense_adapter is None:
             self.adapter = None
@@ -146,7 +147,9 @@ def train_self_attention(args):
         backbone=args.backbone,
         backbone_img_size=args.backbone_img_size,
     )
+    # backbone_weights stays out of architecture_config: checkpoints hold the full backbone state dict.
     model = DinoSelfAttention(classifier_checkpoint_path=args.classifier_checkpoint,
+                              backbone_weights=args.backbone_weights,
                               freeze_backbone=args.freeze_backbone,
                               **architecture_config).to(device)
     with open(os.path.join(run_dir, "architecture_config.json"), "w") as f:
@@ -214,6 +217,9 @@ def build_parser():
                         help='RETFound input size (frames are resized from --img_size inside the backbone); multiple of 14.')
     parser.add_argument('--classifier_checkpoint', type=str, default=None,
                         help='Path to trained classifier model (.pth)')
+    parser.add_argument('--backbone_weights', type=str, default=None,
+                        help='Other DINOv3 ViT-L/16 weights (e.g. dino/ssl_lora/<run>/merged_backbone.pth); '
+                             'overridden by --classifier_checkpoint.')
     parser.add_argument('--seed', type=int, default=42,
                         help='Seeds weight init, WeightedRandomSampler, and random_segment_sample.')
     parser.add_argument('--split_path', type=str, required=True)
@@ -293,6 +299,8 @@ if __name__ == "__main__":
     if args.no_adapter_pe and args.dense_adapter != 'linear_attnpool':
         parser.error('--no_adapter_pe needs --dense_adapter linear_attnpool')
 
+    if args.backbone != 'dinov3' and args.backbone_weights:
+        parser.error('--backbone_weights holds DINOv3 ViT-L/16 weights, only for --backbone dinov3')
     if args.backbone != 'dinov3' and args.classifier_checkpoint:
         parser.error('--classifier_checkpoint holds DINOv3 classifier weights, only for --backbone dinov3')
 

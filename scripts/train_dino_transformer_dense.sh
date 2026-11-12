@@ -6,6 +6,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 
+# HISTORICAL: baseline v2 on the old video-level splits (data/stratified_splits_paxos2025) with a classifier checkpoint that
+# is not shared. Kept for reference; current runs: train_pgcw.sh / train_dino_transformer.sh (see README.md).
 # Baseline v2 with dense DINOv3 patch tokens instead of CLS: the 32x32 patch grid goes through an adapter
 # (transformer/adapters.py) giving K tokens per frame, and the bag transformer attends over all 32*K tokens.
 # Usage: sbatch train_dino_transformer_dense.sh [adapter] [dense_tokens] [extra args...]

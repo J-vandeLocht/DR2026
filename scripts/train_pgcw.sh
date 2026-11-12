@@ -7,15 +7,21 @@
 # Ablations: TAG=pgc NEW="--crop_borders" ONLY="clf dft cnx" bash train_pgcw.sh (--crop_borders is the default since 2026-11-01;
 # NEW="--no_crop_borders" = plain *_pgl config).
 # EXTRA: appended to every job (overrides earlier args, e.g. EXTRA="--distance_scale_weight 0").
+# BW: --backbone_weights for the classifier jobs only (SSL-adapted backbone, dino/ssl_lora.py); DINO transformers inherit it.
 # Other split dir: SP=data/stratified_splits_paxos2025_patient_q5_v2 TAG=pgv2 NEW="" bash train_pgcw.sh (current defaults, crop on).
+# Current dataset (2026-11-12): SP=data/stratified_splits_paxos2025_patient_q5_v3 TAG=<tag> bash train_pgcw.sh
 SPLITS=(${SPLITS:-1 2 3 4 5})
 MAX_GPUS=${MAX_GPUS:-5}
 ONLY=${ONLY:-clf dft cnx dfz cnxp}
 SESSION=${SESSION:-dr_hiwi_stage2}
 TAG=${TAG:-pgcw}
 cd "$(dirname "$0")/.."
+command -v gpu >/dev/null || { echo "needs the local 'gpu' wrapper + tmux (GPU workstation); on SLURM use the sbatch scripts"; exit 1; }
+tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
+mkdir -p dino/logs convnext/logs results
 SP=${SP:-data/stratified_splits_paxos2025_patient_q5}
 EXTRA=${EXTRA:-}
+BW=${BW:-}  # backbone weights for the classifier (e.g. dino/ssl_lora/<run>/merged_backbone.pth); transformers inherit them
 
 new=${NEW-"--sampler_power 0.5 --class_weight_power 0.5 --crop_borders"}
 common="--lr 1e-5 --min_lr 1e-7 --weight_decay 0.0 --img_size 512 --complex_augs --num_frames 32 --random_segment_sample \
@@ -25,7 +31,7 @@ JOBS=()  # name|split|log dir|python -m args
 for s in "${SPLITS[@]}"; do
   JOBS+=("clf|$s|dino|dino.train_dino_classifier --split_path $SP/split_$s --lr 5e-6 --batch_size 2 --epochs 15 \
  --img_size 512 --complex_augs --lr_schedule cosine --min_lr 1e-7 --distance_scale_weight 0.2 --weight_decay 0.0 $new \
- --run_tag clf_$TAG")
+ ${BW:+--backbone_weights $BW} --run_tag clf_$TAG")
 done
 for s in "${SPLITS[@]}"; do
   JOBS+=("dft|$s|dino|dino.train_dino_transformer --classifier_checkpoint CLF --split_path $SP/split_$s $common $new \

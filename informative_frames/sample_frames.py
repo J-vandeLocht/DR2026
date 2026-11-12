@@ -2,7 +2,7 @@ import cv2
 from pathlib import Path
 
 VIDEO_DIR = Path('data/dr_videos')
-# VIDEO_DIR = Path('/home/user/mueller9/Data/2020_Paxos_Videos/data')
+# VIDEO_DIR = Path('~/Data/2020_Paxos_Videos/data').expanduser()
 OUTPUT_DIR = Path('data/informative_frames/frames_raw_extract')
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

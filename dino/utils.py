@@ -1,3 +1,5 @@
+import re
+
 import torch
 import torch.nn as nn
 import cv2
@@ -16,8 +18,14 @@ BACKBONES = ("dinov3", "retfound_dinov2")
 
 
 def load_dino_backbone(weights=DINO_WEIGHTS):
-    """Pretrained DINOv3 ViT-L/16 from the local hub clone."""
-    return torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", weights=weights)
+    """Pretrained DINOv3 ViT-L/16 from the local hub clone. Files without the hub's '-<hash8>.pth' suffix (e.g.
+    dino/ssl_lora.py's merged_backbone.pth, LVD architecture) are loaded strictly into an untrained model."""
+    if re.search(r"-.{8}\.pth$", weights):
+        return torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", weights=weights)
+    model = torch.hub.load(DINO_REPO, "dinov3_vitl16", source="local", pretrained=False)
+    model.load_state_dict(torch.load(weights, map_location="cpu"), strict=True)
+    print(f"DINOv3 ViT-L/16 weights loaded strictly from {weights}")
+    return model
 
 
 class RetFoundBackbone(nn.Module):
@@ -62,10 +70,11 @@ class RetFoundBackbone(nn.Module):
         return {"x_norm_clstoken": tokens[:, 0], "x_norm_patchtokens": tokens[:, p:]}
 
 
-def load_backbone(name="dinov3", img_size=224):
-    """Backbone by name (BACKBONES): pretrained DINOv3 ViT-L/16 or RETFound_dinov2_meh at img_size (RETFound only)."""
+def load_backbone(name="dinov3", img_size=224, weights=None):
+    """Backbone by name (BACKBONES): pretrained DINOv3 ViT-L/16 (optionally other ViT-L weights, e.g. an SSL-adapted
+    merged_backbone.pth) or RETFound_dinov2_meh at img_size (RETFound only)."""
     if name == "dinov3":
-        return load_dino_backbone()
+        return load_dino_backbone(weights or DINO_WEIGHTS)
     if name == "retfound_dinov2":
         return RetFoundBackbone(img_size=img_size)
     raise ValueError(f"Unknown backbone: {name}")

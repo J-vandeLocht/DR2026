@@ -1,0 +1,66 @@
+Eye_ID,Recording,Paxos_DR,Paxos_video_quality,Paxos_sharpness,Paxos_illumination,Paxos_secs,Comments
+R008R,R008R,0,2.0,2.0,2.0,91.23,
+R011L,R011L,0,2.0,2.0,2.0,184.23,
+R011R,R011R,0,2.0,2.0,2.0,127.23,
+R012L,R012L,4,2.0,2.0,2.0,13.17,
+R014R,R014R,2,1.0,1.0,1.0,21.97,
+R015L,R015L,2,1.0,1.0,2.0,43.93,
+R017R,R017R,2,1.0,1.0,2.0,21.37,
+R018R,R018R,4,2.0,1.0,2.0,30.27,
+R018L,R018L,4,1.0,1.0,2.0,93.7299999999999,
+R020L,R020L,2,2.0,2.0,2.0,16.1,
+R020R,R020R,0,2.0,2.0,2.0,87.27,
+R022L,R022L,4,2.0,2.0,2.0,76.17,
+R023L,R023L,0,2.0,2.0,2.0,25.03,
+R023R,R023R,0,2.0,2.0,2.0,55.5,
+R024R,R024R,2,3.0,3.0,3.0,47.27,
+R026L,R026L,4,1.0,1.0,2.0,26.2,pre- or intraretinal hemorrhages?
+R026R,R026R,2,1.0,1.0,2.0,84.5,
+R027L,R027L,0,2.0,1.0,2.0,126.5,small exudates around macula???
+R027R,R027R,0,2.0,2.0,2.0,184.23,small exudates around macula???
+R028L,R028L,2,2.0,2.0,2.0,72.47,
+R028R,R028R,1,2.0,2.0,2.0,23.4,microaneurysms; also cotton wool spot (nasal inferior arcade)???
+R029L,R029L2,2,1.0,1.0,2.0,98.2299999999999,
+R031R,R031R,0,1.0,1.0,2.0,144.86,
+R032L,R032L,0,1.0,1.0,2.0,39.27,Grading etwas unsicher
+R033R,R033R,2,2.0,2.0,2.0,14.43,
+R034L,R034L3,2,2.0,2.0,2.0,101.13,Meiner Einschätzung nach sehen wir hier ein Microaneurysm und ein intraretinal hemorrhage (1:12).
+R034R,R034R2,2,2.0,2.0,2.0,45.9,"intraretinal hemorrhage + exudates around macula (?), preretinal hemorrhage around disc (??? only in R2 visible)"
+R035L,R035L,2,2.0,2.0,2.0,83.03,
+R035R,R035R,2,1.0,1.0,2.0,80.67,"maybe even severe, bcuz of more than 20 intraretinal hemorrhages per quadrant"
+R036L,R036L,2,1.0,1.0,2.0,131.0,is there a preretinal hemorrhage?? (0:08)
+R036R,R036R,4,1.0,1.0,1.0,75.83,
+R037L,R037L,0,1.0,1.0,2.0,69.47,
+R037R,R037R,2,2.0,2.0,2.0,86.13,Are there a few exudates around macula?
+R038R,R038R,0,1.0,1.0,1.0,93.33,
+R040L,R040L,4,0.0,0.0,2.0,106.33,fibrovaskuläre Veränderungen unter Katarakt (?)
+R040R,R040R,4,0.0,0.0,2.0,13.43,Orientierung nicht möglich
+R044R,R044R,0,2.0,2.0,1.0,140.13,Makulaforamen
+R045L,R045L,2,2.0,2.0,2.0,134.2,moderate da exudates
+R045R,R045R,2,2.0,1.0,2.0,116.2,
+R047L,R047L,2,2.0,1.0,2.0,73.93,
+R047R,R047R,4,1.0,1.0,2.0,112.2,
+R049L,R049L3,2,1.0,1.0,2.0,91.93,
+R049R,R049R,0,1.0,1.0,2.0,61.17,kaum Aussagekraft
+R050L,R050L,0,2.0,1.0,2.0,65.77,
+R051L,R051L,0,1.0,1.0,1.0,121.33,
+R052L,R052L,0,2.0,1.0,2.0,91.2,
+R052R,R052R,0,2.0,1.0,2.0,103.9,
+R054R,R054R,0,2.0,1.0,2.0,120.0,
+R056L,R056L,0,1.0,1.0,2.0,114.07,
+R056R,R056R,4,0.0,0.0,0.0,65.37,
+R057L,R057L,0,2.0,2.0,2.0,80.47,
+R057R,R057R,0,2.0,2.0,2.0,125.56,
+R058L,R058L,2,2.0,2.0,2.0,39.73,
+R058R,R058R,2,2.0,2.0,2.0,86.9,
+R059L,R059L,0,1.0,2.0,1.0,87.87,
+R059R,R059R,0,2.0,2.0,2.0,117.37,
+R060L,R060L,0,2.0,2.0,1.0,65.0,kaum Aussagekraft
+R060R,R060R,0,2.0,2.0,2.0,69.67,
+R061R,R061R,2,2.0,1.0,2.0,17.97,
+R062R,R062R,2,2.0,2.0,2.0,70.3,
+R063L,R063L,4,2.0,1.0,2.0,78.73,neovascularizations around disc??? => 4; if not => 0
+R064R,R064R,0,1.0,0.0,1.0,91.83,
+R065L,R065L,4,2.0,1.0,2.0,133.93,Laser
+R067L,R067L,4,2.0,2.0,2.0,151.1,
+R068L,R068L,0,1.0,1.0,2.0,192.66,

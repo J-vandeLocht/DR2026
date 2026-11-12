@@ -1,0 +1,49 @@
+Paxos2020 videos removed from the test set (Paxos_sharpness != 3 or <= 139 cleaned-clip frames).
+video	grade	reason
+C002R	3	sharpness 2
+C004L	2	sharpness 2, 96 frames
+C004R	4	sharpness 2, 64 frames
+C006R	0	sharpness 2, 132 frames
+C007R	1	67 frames
+C008L	0	sharpness 2, 109 frames
+C008R	0	sharpness 2
+C009L	0	sharpness 2, 116 frames
+C012L	2	sharpness 2
+C014L	0	sharpness 2
+C021L	0	114 frames
+C021R	2	sharpness 2, 103 frames
+D006R	0	sharpness 2
+D008L	0	sharpness 2
+D008R	0	sharpness 2
+D012R	0	sharpness 2, 64 frames
+D013L	0	sharpness 2
+D013R	0	sharpness 2
+D014R	2	sharpness 2
+D015R	0	sharpness 2
+D016L	0	sharpness 2
+D016R	0	sharpness 2
+D017L	0	118 frames
+D019L	2	sharpness 2
+E005R	2	sharpness 2
+E007L	0	sharpness 2
+F013L	0	sharpness 2
+F014L	0	sharpness 2
+G009L	1	sharpness 2
+G013R	0	sharpness 2
+H004L	0	sharpness 2
+H008L	1	sharpness 2
+I004L	1	sharpness 2
+I006L	1	sharpness 2
+I008R	0	sharpness 2
+I013R	2	sharpness 2
+I016L	0	sharpness 2
+I017L	0	sharpness 2, 101 frames
+J005L	0	99 frames
+J005R	0	90 frames
+J006L	2	sharpness 2
+K010L	2	sharpness 2
+K011L	1	sharpness 2
+K016L	0	sharpness 2
+K020R	0	sharpness 2
+N002L	0	sharpness 2
+P011L	2	sharpness 2

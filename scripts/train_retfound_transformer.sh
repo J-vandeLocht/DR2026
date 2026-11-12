@@ -8,6 +8,9 @@ RES=(${RES:-224 448})
 MAX_GPUS=${MAX_GPUS:-5}
 SESSION=${SESSION:-dr_hiwi_stage2}
 cd "$(dirname "$0")/.."
+command -v gpu >/dev/null || { echo "needs the local 'gpu' wrapper + tmux (GPU workstation); on SLURM use the sbatch scripts"; exit 1; }
+tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
+mkdir -p dino/logs convnext/logs results
 SP=data/stratified_splits_paxos2025_patient_q5
 [ -f dino/RETFound_dinov2_meh.pth ] || { echo "missing dino/RETFound_dinov2_meh.pth"; exit 1; }
 

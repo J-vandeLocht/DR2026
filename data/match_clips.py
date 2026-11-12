@@ -26,10 +26,6 @@ def get_core_id_from_image(filename):
     return FRAME_SUFFIX_RE.sub('', filename)
 
 
-# Repeat recordings of an eye ('R012L3') are merged into one clip ('R012L', data/merge_repeats.py)
-R_REPEAT_RE = re.compile(r'^(R\d+[LR])\d+$')
-
-
 # 1. Get all files across all provided dirs
 # clips/images become (filename, source_dir) pairs so we know where each file lives
 clips = []
@@ -83,8 +79,6 @@ image_match_targets = defaultdict(list)
 # 4. Perform Strict Matching
 for img, _ in images:
     img_core = get_core_id_from_image(img)
-    if img_core not in core_id_to_clips and R_REPEAT_RE.match(img_core):
-        img_core = R_REPEAT_RE.match(img_core).group(1)
 
     if img_core in ambiguous_core_ids:
         # Core id exists but is ambiguous among multiple clip files; skip.

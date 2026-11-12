@@ -6,34 +6,21 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 
+# Per-video attention plots of trained DINO transformer runs. RUNS lists one run dir per split 1..N (indexed by split
+# number, so SPLITS="3" needs at least 3 entries).
+# Usage (from scripts/): RUNS="transformer/models/<run of split 1> ..." SPLITS="1" sbatch vis_attention.sh
+#   SP= split dir the runs were trained on, OUT_DIR= output dir, LIMIT= videos per split.
+SP=${SP:-data/stratified_splits_paxos2025_patient_q5_v3}
+[ -n "$RUNS" ] || { echo "set RUNS=<transformer run dirs, one per split>"; exit 1; }
+
 source ~/.bashrc
 conda activate job_new
 cd ..
 
-TRANSFORMER_PATHS=(
-"transformer/models/dino_sa_binary_split_1_0925_1835_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_binary_split_2_0925_1901_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_binary_split_3_0925_2006_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_binary_split_4_0925_2133_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_binary_split_5_0926_0135_full_2blocks/best_sa_model.pth"
-)
-
-TRANSFORMER_PATHS_ALL=(
-"transformer/models/dino_sa_all_split_1_0926_1618_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_all_split_2_0926_1856_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_all_split_3_0926_2123_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_all_split_4_0928_1849_full_2blocks/best_sa_model.pth"
-#"transformer/models/dino_sa_all_split_5_0928_2110_full_2blocks/best_sa_model.pth"
-)
-
 python -u -m dino.vis_attention \
-  --trans_paths "${TRANSFORMER_PATHS[@]}" \
-  --splits 1 \
+  --trans_paths $RUNS \
+  --splits ${SPLITS:-1} \
+  --annotations_path "$SP" \
   --complex_augs \
-  --output_dir 'binary_transformer_attention_analysis_new_L2'
-
-python -u -m dino.vis_attention \
-  --trans_paths "${TRANSFORMER_PATHS_ALL[@]}" \
-  --splits 1 \
-  --complex_augs  \
-  --output_dir 'all_transformer_attention_analysis_new_L2'
+  ${LIMIT:+--limit $LIMIT} \
+  --output_dir "${OUT_DIR:-transformer_attention_analysis}"

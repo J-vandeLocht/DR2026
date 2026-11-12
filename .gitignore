@@ -4,7 +4,8 @@ classifier/cropped_classifier_frames/
 classifier/models/
 cropping/frames_to_annotate_larger/
 cropping/models/
-data/2024_Paxos_Frames/
+data/2024_Paxos_Frames
+data/dr_videos
 data/ensemble_results_*/
 data/informative_frames/
 data/stratified_splits/split_*/
@@ -30,3 +31,6 @@ results/*.tmp
 **/notes
 data/attention_errors_cnx/
 data/multi_eval_paxos2025_binary/
+tmp/
+occlusion_results/
+transformer_attention_analysis/

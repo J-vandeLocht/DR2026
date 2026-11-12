@@ -27,6 +27,10 @@ def normalize_id(s):
 # This pulls that bare ID back out of a descriptive name.
 IMG_ID_RE = re.compile(r'IMG_?(\d+)', re.IGNORECASE)
 
+# Repeat recordings of an eye ('R008R2', 'R034L3') are separate clips graded by their eye's entry ('R008R').
+R_CODE_SUFFIX_RE = re.compile(r'^(R\d+[LR])\d+$')
+
+
 def extract_file_id(name):
     name = os.path.splitext(name)[0]  # strip extension if present
     match = IMG_ID_RE.search(name)
@@ -86,9 +90,12 @@ key_usage = defaultdict(list)  # normalized CSV key -> list of (source, id) that
 
 
 def find_grade(query_id):
-    # Exact lookup only: repeat recordings of an eye (R008R2, ...) are merged into one clip (merge_repeats.py).
     if query_id in csv_grades:
         return csv_grades[query_id], query_id
+    # Repeat recording: fall back to the eye's grade
+    match = R_CODE_SUFFIX_RE.match(query_id)
+    if match and match.group(1) in csv_grades:
+        return csv_grades[match.group(1)], match.group(1)
 
     return None, None
 
@@ -175,4 +182,4 @@ with open("data/image_labels_2025.json", "w") as f:
     json.dump(final_image_labels, f, indent=4)
 
 print("Success!")
-print(f"Mapped {len(final_clip_labels)} clips and {len(final_image_labels)} images.")
+print(f"Mapped {len(final_clip_labels)} clips and {len(final_image_labels)} images.")

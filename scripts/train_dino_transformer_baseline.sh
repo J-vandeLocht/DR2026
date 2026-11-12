@@ -6,6 +6,8 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 
+# HISTORICAL: baseline v2 on the old video-level splits (data/stratified_splits_paxos2025) with a classifier checkpoint that
+# is not shared. Kept for reference; current runs: train_pgcw.sh / train_dino_transformer.sh (see README.md).
 # Baseline v2 (set 2026-10-14, Paxos2025 clips replaced that day): frozen-backbone transformer with cluster
 # sampling, lr 1e-5, 10 epochs, cosine LR decay to 1e-7, checkpoint selected by mean(QWK, referable recall)
 # (acc added to --selection_metric combined on 2026-10-20; results below used QWK + RR only),

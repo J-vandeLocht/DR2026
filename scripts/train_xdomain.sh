@@ -15,6 +15,9 @@ XTAG=${XTAG:-xdom}
 EXTRA=${EXTRA:-}
 ONLY=${ONLY:-clf cnx dft dfz}  # job names to launch
 cd "$(dirname "$0")/.."
+command -v gpu >/dev/null || { echo "needs the local 'gpu' wrapper + tmux (GPU workstation); on SLURM use the sbatch scripts"; exit 1; }
+tmux has-session -t "$SESSION" 2>/dev/null || tmux new-session -d -s "$SESSION"
+mkdir -p dino/logs convnext/logs results
 SP=data/stratified_splits_paxos2025_q5_full_xdom
 
 common="--train_json mil_train.json --val_json mil_val.json --fused_dataset --lr 1e-5 --min_lr 1e-7 --weight_decay 0.0 \

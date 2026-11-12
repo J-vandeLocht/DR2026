@@ -16,10 +16,6 @@
             "R060L_frame50_score0.9993.png",
             "R060L_frame1290_score0.9990.png"
         ],
-        "R012L": [
-            "R012L3_frame740_score0.9979.png",
-            "R012L3_frame5549_score0.9972.png"
-        ],
         "R049R": [
             "R049R_frame381_score0.9995.png",
             "R049R_frame95_score0.9991.png"
@@ -52,6 +48,15 @@
         "2024_06_07_11_02_IMG_3467 HEALTHY": [
             "2024_06_07_11_02_IMG_3467 HEALTHY_frame153_score0.9989.png",
             "2024_06_07_11_02_IMG_3467 HEALTHY_frame1269_score0.9974.png"
+        ],
+        "R034L2": [
+            "R034L2_frame163_score0.9984.png",
+            "R034L2_frame189_score0.8925.png"
+        ],
+        "R026L2": [
+            "R026L2_frame115_score0.9984.png",
+            "R026L2_frame4599_score0.9982.png",
+            "R026L2_frame668_score0.9983.png"
         ],
         "2024_04_04_13_10_IMG_4899 LE MILD NPDR": [
             "2024_04_04_13_10_IMG_4899 LE MILD NPDR_frame2634_score0.9994.png",
@@ -136,10 +141,6 @@
             "2024_02_15_14_08_IMG_4657 LE MILD NPDR_frame1543_score0.9991.png",
             "2024_02_15_14_08_IMG_4657 LE MILD NPDR_frame118_score0.9990.png"
         ],
-        "R029L": [
-            "R029L2_frame58_score0.9984.png",
-            "R029L2_frame1344_score0.9983.png"
-        ],
         "2024_06_13_12_28_IMG_3480 RE HEALTHY": [
             "2024_06_13_12_28_IMG_3480 RE HEALTHY_frame75_score0.9989.png",
             "2024_06_13_12_28_IMG_3480 RE HEALTHY_frame1966_score0.9995.png"
@@ -151,10 +152,6 @@
         "2024_04_30_11_56_IMG_5010 LE HEALTHY": [
             "2024_04_30_11_56_IMG_5010 LE HEALTHY_frame1506_score0.9989.png",
             "2024_04_30_11_56_IMG_5010 LE HEALTHY_frame78_score0.9985.png"
-        ],
-        "R015L": [
-            "R015L2_frame360_score0.9967.png",
-            "R015L2_frame967_score0.9961.png"
         ],
         "R059R": [
             "R059R_frame826_score0.9989.png",
@@ -171,6 +168,10 @@
         "2024_04_30_11_53_IMG_5009 RE HEALTHY": [
             "2024_04_30_11_53_IMG_5009 RE HEALTHY_frame41_score0.9986.png",
             "2024_04_30_11_53_IMG_5009 RE HEALTHY_frame697_score0.9994.png"
+        ],
+        "R049L3": [
+            "R049L3_frame680_score0.9991.png",
+            "R049L3_frame94_score0.9973.png"
         ],
         "IMG_2594 LE MILD NPDR": [
             "IMG_2594 LE MILD NPDR_frame508_score0.9989.png",
@@ -228,6 +229,10 @@
             "R052L_frame2664_score0.9980.png",
             "R052L_frame2567_score0.9983.png"
         ],
+        "R012L3": [
+            "R012L3_frame740_score0.9979.png",
+            "R012L3_frame5549_score0.9972.png"
+        ],
         "IMG_2868 LE HA": [
             "IMG_2868 LE HA_frame99_score0.9982.png",
             "IMG_2868 LE HA_frame652_score0.9980.png",
@@ -252,6 +257,10 @@
         "2024_04_04_11_36_IMG_4896 RE SEV NPDR": [
             "2024_04_04_11_36_IMG_4896 RE SEV NPDR_frame165_score0.9981.png",
             "2024_04_04_11_36_IMG_4896 RE SEV NPDR_frame551_score0.9994.png"
+        ],
+        "R029L2": [
+            "R029L2_frame58_score0.9984.png",
+            "R029L2_frame1344_score0.9983.png"
         ],
         "R026R": [
             "R026R_frame123_score0.9978.png",
@@ -308,6 +317,10 @@
         "2024_06_07_11_43_IMG_3474 LE PDR TRD WITH CRAO": [
             "2024_06_07_11_43_IMG_3474 LE PDR TRD WITH CRAO_frame1543_score0.9991.png",
             "2024_06_07_11_43_IMG_3474 LE PDR TRD WITH CRAO_frame610_score0.9986.png"
+        ],
+        "R041R2": [
+            "R041R2_frame68_score0.9984.png",
+            "R041R2_frame157_score0.9987.png"
         ],
         "2024_06_13_12_40_IMG_3482 RE HEALTHY": [
             "2024_06_13_12_40_IMG_3482 RE HEALTHY_frame650_score0.9991.png",
@@ -479,6 +492,10 @@
             "2024_06_13_12_58_IMG_3487 LE MOD NPDR_frame3173_score0.9993.png",
             "2024_06_13_12_58_IMG_3487 LE MOD NPDR_frame172_score0.9986.png"
         ],
+        "R040R2": [
+            "R040R2_frame149_score0.9988.png",
+            "R040R2_frame1358_score0.9990.png"
+        ],
         "2024_04_12_11_40_IMG_4960 RE HEALTHY": [
             "2024_04_12_11_40_IMG_4960 RE HEALTHY_frame284_score0.9996.png",
             "2024_04_12_11_40_IMG_4960 RE HEALTHY_frame1411_score0.9996.png"
@@ -507,6 +524,10 @@
         ],
         "R046L": [
             "R046L_frame856_score0.9990.png"
+        ],
+        "R020L2": [
+            "R020L2_frame1689_score0.9995.png",
+            "R020L2_frame77_score0.9986.png"
         ],
         "2024_04_01_12_16_IMG_4869 SEV NPDR WITH DME": [
             "2024_04_01_12_16_IMG_4869 SEV NPDR WITH DME_frame564_score0.9991.png",
@@ -652,10 +673,6 @@
             "R020R_frame410_score0.9989.png",
             "R020R_frame173_score0.9988.png"
         ],
-        "R034L": [
-            "R034L2_frame163_score0.9984.png",
-            "R034L2_frame189_score0.8925.png"
-        ],
         "2024_05_09_13_06_IMG_5053 RE HEALTHY": [
             "2024_05_09_13_06_IMG_5053 RE HEALTHY_frame92_score0.9987.png",
             "2024_05_09_13_06_IMG_5053 RE HEALTHY_frame809_score0.9985.png"
@@ -718,11 +735,6 @@
         "R058L": [
             "R058L_frame84_score0.9969.png",
             "R058L_frame642_score0.9970.png"
-        ],
-        "R026L": [
-            "R026L2_frame115_score0.9984.png",
-            "R026L2_frame4599_score0.9982.png",
-            "R026L2_frame668_score0.9983.png"
         ],
         "2024_06_14_11_52_IMG_3492": [
             "2024_06_14_11_52_IMG_3492_frame399_score0.9995.png",
@@ -864,10 +876,6 @@
             "IMG_2620 RE MILD NPDR_frame99_score0.9992.png",
             "IMG_2620 RE MILD NPDR_frame1374_score0.9994.png"
         ],
-        "R049L": [
-            "R049L3_frame680_score0.9991.png",
-            "R049L3_frame94_score0.9973.png"
-        ],
         "R036R": [
             "R036R_frame124_score0.9989.png",
             "R036R_frame240_score0.9616.png"
@@ -971,10 +979,6 @@
             "2024_04_30_12_48_IMG_5016 SEV NPDR_frame3957_score0.9977.png",
             "2024_04_30_12_48_IMG_5016 SEV NPDR_frame939_score0.9975.png"
         ],
-        "R041R": [
-            "R041R2_frame68_score0.9984.png",
-            "R041R2_frame157_score0.9987.png"
-        ],
         "2024_05_06_14_02_IMG_3273 RE PDR": [
             "2024_05_06_14_02_IMG_3273 RE PDR_frame182_score0.9994.png",
             "2024_05_06_14_02_IMG_3273 RE PDR_frame845_score0.9996.png"
@@ -986,10 +990,6 @@
         "IMG_2597 RE MACULAR SCAR": [
             "IMG_2597 RE MACULAR SCAR_frame873_score0.9996.png",
             "IMG_2597 RE MACULAR SCAR_frame328_score0.9993.png"
-        ],
-        "R040R": [
-            "R040R2_frame149_score0.9988.png",
-            "R040R2_frame1358_score0.9990.png"
         ],
         "IMG_2623 LE HEALTHY": [
             "IMG_2623 LE HEALTHY_frame915_score0.9997.png",
@@ -1027,6 +1027,10 @@
             "R018R_frame85_score0.9347.png",
             "R018R_frame382_score0.9995.png",
             "R018R_frame100_score0.9992.png"
+        ],
+        "R015L2": [
+            "R015L2_frame360_score0.9967.png",
+            "R015L2_frame967_score0.9961.png"
         ],
         "IMG_2503 LE ERM+": [
             "IMG_2503 LE ERM+_frame973_score0.9979.png"
@@ -1229,10 +1233,6 @@
             "2024_06_14_12_41_IMG_3501_frame68_score0.9994.png",
             "2024_06_14_12_41_IMG_3501_frame1600_score0.9990.png"
         ],
-        "R020L": [
-            "R020L2_frame1689_score0.9995.png",
-            "R020L2_frame77_score0.9986.png"
-        ],
         "2024_04_12_11_22_IMG_4958 RE MOD NPDR": [
             "2024_04_12_11_22_IMG_4958 RE MOD NPDR_frame2484_score0.9994.png",
             "2024_04_12_11_22_IMG_4958 RE MOD NPDR_frame101_score0.9989.png"
@@ -1255,11 +1255,15 @@
         ]
     },
     "unmatched_clips": [
+        "R036R3",
+        "R012L",
         "R004L",
         "R006L",
+        "R047R2",
         "IMG_2601 DRUSEN+",
         "IMG_2612 LE TORTOUSED VESSEL+",
         "2024_04_05_10_17_IMG_4918 LE MACULAR DEGENERATION",
+        "R008R2",
         "R068R",
         "IMG_2610 RE TORTOUS VESSEL",
         "2024_04_05_13_37_IMG_4934 LE HEALTHY",
@@ -1267,10 +1271,15 @@
         "2024_05_09_12_48_IMG_5050 LE DRUSEN+",
         "2024_05_09_13_20_IMG_5056 LE RPE ALTERATIONS",
         "R017R",
+        "R029L",
         "R025R",
         "2024_04_12_13_30_IMG_4971 RE HIGH MYOP",
         "2024_04_06_10_39_IMG_4940 LE FTMH",
         "2024_04_05_12_51_IMG_4927 RE HEALTHY",
+        "R015L",
+        "R034L3",
+        "R008R3",
+        "R037R2",
         "IMG_2596 ERM+ DRUSENS",
         "2024_04_05_11_49_IMG_4926 LE FVP",
         "IMG_2614 RE DME",
@@ -1284,11 +1293,15 @@
         "R069R",
         "2024_04_11_15_29_IMG_4957 LE ERM",
         "2024_05_31_12_09_IMG_3430 LE WET AMD",
+        "R058R3",
         "2024_05_31_12_01_IMG_3428 LE STBRVO WITH CME",
         "IMG_2718 RE CRVO",
         "IMG_2889 RE ASTERIOD SCLEROSIS",
+        "R028R2",
+        "R058L2",
         "2024_04_06_10_29_IMG_4938 LE MUTIPLE CHORIORETINAL PATCHES",
         "2024_04_05_13_29_IMG_4933 RE HEALTHY",
+        "R017R3",
         "R038L",
         "IMG_2711 RE AMD",
         "2024_04_05_12_54_IMG_4928 LE HEALTHY",
@@ -1298,22 +1311,36 @@
         "2024_05_09_13_38_IMG_5060 LE ERM",
         "2024_05_09_13_36_IMG_5059 RE ERM",
         "2024_04_12_12_03_IMG_4961 RE HEALTHY",
+        "R023L2",
+        "R036R2",
+        "R047R3",
         "R002L",
+        "R017R2",
+        "R034R2",
         "R010R",
         "IMG_2588 RE ERM",
         "R014L",
         "2024_04_12_12_58_IMG_4966 RE TRD",
         "2024_05_09_13_10_IMG_5054 LE ERM PRESENT",
+        "R034L",
         "R031L",
         "2024_05_09_13_19_IMG_5055 RE RPE ALTERNATIONS",
         "R054R",
+        "R026L",
         "R003R",
+        "R012L2",
         "2024_06_14_12_26_IMG_3498",
         "2024_06_14_12_10_IMG_3497",
+        "R049L",
         "2024_04_05_10_24_IMG_4919 RE LASERED PDR",
         "2024_04_06_11_50_IMG_4945 LE ASTEROID HYALOSIS",
         "2024_05_31_12_08_IMG_3429  RE WET AMD",
+        "R033R2",
+        "R041R",
         "2024_04_12_13_32_IMG_4972 LE HIGH MYOP",
+        "R058R2",
+        "R040R",
+        "R049L2",
         "R050R",
         "IMG_2716 LE NO DR CHANGES",
         "R005L",
@@ -1327,12 +1354,14 @@
         "R001L",
         "R066R",
         "2024_05_09_12_46_IMG_5049 RE DRUSEN+",
+        "R018R2",
         "IMG_2618 RE MH",
         "IMG_2553 LE ERM+",
         "2024_06_07_10_52_IMG_3466 LE DRUSEN+",
         "IMG_2548 RE ERM+",
         "2024_06_07_10_51_IMG_3465 RE HEALTHY",
         "R007R",
+        "R020L",
         "2024_05_09_12_31_IMG_5047 RE LATTICLEWITH RETINAL HOLE"
     ],
     "unmatched_images": []
