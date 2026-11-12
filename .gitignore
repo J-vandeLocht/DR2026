@@ -4,6 +4,7 @@ classifier/cropped_classifier_frames/
 classifier/models/
 cropping/frames_to_annotate_larger/
 cropping/models/
+cropping/eval_xdomain/vis_compare_*/
 data/2024_Paxos_Frames/
 data/ensemble_results_*/
 data/informative_frames/
@@ -31,3 +32,4 @@ results/*.tmp
 data/attention_errors_cnx/
 data/multi_eval_paxos2025_binary/
 .idea/
+slurm*.out
