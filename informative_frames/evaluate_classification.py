@@ -29,11 +29,17 @@ Outputs in --out_dir:
                          5 fold values as points, cross-dataset bars are single hatched bars
                          (5-model ensemble on all data)
 
+If --configs is not given, the configs are auto-detected from the checkpoints present in
+--models_dir (cls_<config>_fold_<i>.pth), so the evaluation runs out of the box on whatever
+was trained -- e.g. without the "both" variant the plot simply has 4 bars instead of 6.
+Configs without any checkpoint are skipped (and left out of the plot).
+
 Run from the repo root:
     python -u -m informative_frames.evaluate_classification
 """
 
 import argparse
+import re
 from pathlib import Path
 
 import matplotlib
@@ -138,10 +144,17 @@ def main():
     parser.add_argument("--img_size", type=int, default=512)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--num_workers", type=int, default=4)
-    parser.add_argument("--configs", nargs="+", default=CONFIGS)
+    parser.add_argument("--configs", nargs="+", default=None,
+                        help="Configs to evaluate; default: auto-detected from <models_dir>/cls_<config>_fold_<i>.pth.")
     parser.add_argument("--eval_datasets", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
     parser.add_argument("--n_splits", type=int, default=5)
     args = parser.parse_args()
+
+    if args.configs is None:
+        found = sorted({m.group(1) for p in Path(args.models_dir).glob("cls_*_fold_*.pth")
+                        for m in [re.fullmatch(r"cls_(.+)_fold_\d+\.pth", p.name)] if m})
+        args.configs = found if found else CONFIGS
+        print(f"--configs not given: auto-detected from {args.models_dir}: {args.configs}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(args.out_dir)
@@ -222,7 +235,8 @@ def main():
             elif len(cross):
                 mode, vals = "cross_ensemble", cross
             else:
-                mode, vals = "missing", sub
+                print(f"WARNING: no results for config={config} eval={eval_ds} -- skipped in plot")
+                continue
             for m in METRICS:
                 v = vals[m].to_numpy(dtype=float)
                 bar_rows.append({"config": config, "eval_ds": eval_ds, "metric": m, "mode": mode,
@@ -239,9 +253,12 @@ def main():
         x, labels = 0, []
         for config in args.configs:
             for eval_ds in args.eval_datasets:
-                bar = bar_summary[(bar_summary["config"] == config)
-                                  & (bar_summary["eval_ds"] == eval_ds)
-                                  & (bar_summary["metric"] == m)].iloc[0]
+                bars = bar_summary[(bar_summary["config"] == config)
+                                   & (bar_summary["eval_ds"] == eval_ds)
+                                   & (bar_summary["metric"] == m)]
+                if not len(bars):
+                    continue
+                bar = bars.iloc[0]
                 mean, std, n_pts, mode = bar["mean"], bar["std"], int(bar["n_points"]), bar["mode"]
                 hatch = "//" if mode == "cross_ensemble" else None
                 ax.bar(x, mean, yerr=std if n_pts > 1 else 0, capsize=4, color=palette[config],
@@ -268,7 +285,8 @@ def main():
         ax.grid(axis="y", alpha=0.3)
         ax.set_ylabel(METRIC_TITLES[m])
     from matplotlib.patches import Patch
-    fig.legend(handles=[Patch(color=palette[c], label=f"train {c}") for c in args.configs]
+    used_configs = [c for c in args.configs if (bar_summary["config"] == c).any()]
+    fig.legend(handles=[Patch(color=palette[c], label=f"train {c}") for c in used_configs]
                + [Patch(facecolor="white", edgecolor="black", hatch="//",
                         label="cross-dataset: one bar = 5-model prob-ensemble on ALL data")],
                loc="upper right")
