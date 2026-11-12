@@ -1,22 +1,24 @@
-"""Side-by-side comparison of the cropping models trained on Paxos2020 vs Paxos2025.
+"""Side-by-side mask comparison per val frame: in-dataset model vs cross-dataset ensemble.
 
 For each eval dataset (2020 / 2025) this picks --n random frames from the val splits
-(the fold is chosen randomly per frame), runs both single-dataset models
-(seg_2020_fold_<f>.pth and seg_2025_fold_<f>.pth of that fold) on the frame, and
-writes one PNG per dataset. Each frame gets FOUR panels of equal size:
+(the fold is chosen randomly per frame) and writes one PNG per frame into
+<out_dir>/vis_compare_<ds>/. Each figure has THREE panels of equal size:
 
-    ground-truth region | 2020-model region (IoU) | 2025-model region (IoU)
-    | ensemble region (IoU; mean of sigmoid probabilities over all 5 folds of the
-      --ensemble_config model, default "both" -- same ensembling as production)
+    ground-truth region | same-dataset model of that fold (IoU) | ensemble (IoU)
 
-Inside the mask the RGB pixels of the frame are shown, everything outside is black.
-All panels of a row are cropped to ONE common square window at native resolution
-(side = largest bbox dimension of the three masks, centered on their joint bbox,
-clamped to the image) -- no resizing, no skewing -- so the regions are
-pixel-comparable. Predictions are mapped back to native frame resolution first.
+- "same-dataset model": seg_<ds>_fold_<f>.pth for the frame's fold f -- the model
+  that was NOT trained on the split the frame is in (val fold f).
+- "ensemble": mean of sigmoid PROBABILITIES (threshold 0.5) over all 5 folds of the
+  OTHER dataset's model (seg_<other>_fold_<0..4>.pth) -- that model was never trained
+  on this dataset at all. Same probability-averaging as extract_inf_frames.py.
 
-Outputs: one PNG per frame in <out_dir>/vis_compare_2020/ and <out_dir>/vis_compare_2025/
-(--n frames per dataset, default 25).
+E.g. for a Paxos2020 frame: Paxos2020 fold-f model vs the 5-fold Paxos2025 ensemble.
+
+Inside each mask the RGB pixels of the frame are shown, everything outside is black.
+All panels are cropped to ONE common square window at native resolution (side =
+largest bbox dimension of the masks, centered on their joint bbox, clamped to the
+image) -- no resizing, no skewing. Predictions are mapped back to native frame
+resolution (nearest neighbor) first.
 
 Run from the repo root:
     python -u -m cropping.vis_compare_models
@@ -39,6 +41,7 @@ import pandas as pd
 import torch
 import segmentation_models_pytorch as smp
 from albumentations.pytorch import ToTensorV2
+
 
 def get_val_transform(img_size):
     return albu.Compose([
@@ -101,10 +104,7 @@ def main():
     parser.add_argument("--n", type=int, default=25, help="frames (one PNG each) per eval dataset")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--n_splits", type=int, default=5)
-    parser.add_argument("--configs", nargs="+", default=["2020", "2025"], help="the two models to compare")
     parser.add_argument("--eval_datasets", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
-    parser.add_argument("--ensemble_config", type=str, default="both",
-                        help="config whose 5 fold models form the probability-ensemble panel")
     args = parser.parse_args()
 
     plt.rcParams.update({"font.size": 11, "axes.titlesize": 13, "axes.labelsize": 10})
@@ -113,42 +113,42 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     transform = get_val_transform(args.img_size)
     rng = random.Random(args.seed)
-    assert len(args.configs) == 2, "exactly two models are compared (--configs)"
-    c1, c2 = args.configs
 
     for eval_ds in args.eval_datasets:
+        cross = "2025" if eval_ds == "2020" else "2020"  # other cohort: its model never saw eval_ds
         df = pd.read_csv(Path(args.ann_dir) / f"annotations_cropping_{eval_ds}.csv").set_index("filename")
         with open(Path(args.ann_dir) / f"splits_{eval_ds}.json") as f:
             splits = json.load(f)
         candidates = [(fold, fn) for fold in range(args.n_splits) for fn in splits[f"fold_{fold}"]["val"]]
         picks = rng.sample(candidates, min(args.n, len(candidates)))
 
+        # same-dataset fold models for the picked folds
         models = {}
         for fold, _ in picks:
-            for cfg in args.configs:
-                if (cfg, fold) not in models:
-                    path = Path(args.models_dir) / f"seg_{cfg}_fold_{fold}.pth"
-                    if not path.exists():
-                        print(f"WARNING: missing {path}")
-                        continue
-                    models[(cfg, fold)] = load_model(path, args.encoder_name, device)
+            if (eval_ds, fold) not in models:
+                path = Path(args.models_dir) / f"seg_{eval_ds}_fold_{fold}.pth"
+                if not path.exists():
+                    print(f"WARNING: missing {path}")
+                    continue
+                models[(eval_ds, fold)] = load_model(path, args.encoder_name, device)
 
+        # cross-dataset ensemble: all 5 folds of the other cohort, mean sigmoid prob
         ens_models = []
         for efold in range(args.n_splits):
-            epath = Path(args.models_dir) / f"seg_{args.ensemble_config}_fold_{efold}.pth"
+            epath = Path(args.models_dir) / f"seg_{cross}_fold_{efold}.pth"
             if epath.exists():
                 ens_models.append(load_model(epath, args.encoder_name, device))
             else:
                 print(f"WARNING: missing ensemble model {epath}")
         use_ensemble = len(ens_models) == args.n_splits
         if not use_ensemble:
-            print(f"WARNING: ensemble incomplete ({len(ens_models)}/{args.n_splits}) -- 4th panel skipped")
+            print(f"WARNING: ensemble incomplete ({len(ens_models)}/{args.n_splits}) -- ensemble panel skipped")
 
         vis_dir = out_dir / f"vis_compare_{eval_ds}"
         vis_dir.mkdir(parents=True, exist_ok=True)
         n_written = 0
         for fold, fn in picks:
-            if (c1, fold) not in models or (c2, fold) not in models:
+            if (eval_ds, fold) not in models:
                 continue
             img_bgr = cv2.imread(str(Path(args.img_dir) / fn))
             if img_bgr is None:
@@ -158,11 +158,11 @@ def main():
             h, w = img.shape[:2]
             gt = build_gt_mask(df.loc[fn], h, w)
             inp = transform(image=img)["image"].unsqueeze(0).to(device)
-            preds = {}
+
             with torch.no_grad():
-                for cfg in (c1, c2):
-                    p = (torch.sigmoid(models[(cfg, fold)](inp))[0, 0] > 0.5).cpu().numpy()
-                    preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+                p_same = (torch.sigmoid(models[(eval_ds, fold)](inp))[0, 0] > 0.5).cpu().numpy()
+            p_same = cv2.resize(p_same.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+
             ens = None
             if use_ensemble:
                 with torch.no_grad():
@@ -170,21 +170,18 @@ def main():
                 ep = (probs[0, 0] > 0.5).cpu().numpy()
                 ens = cv2.resize(ep.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
 
-            window_masks = [gt, preds[c1], preds[c2]] + ([ens] if ens is not None else [])
+            window_masks = [gt, p_same] + ([ens] if ens is not None else [])
             r0, c0, side = common_square_window(window_masks, h, w)
             rgb = img[r0:r0 + side, c0:c0 + side]
-            crops = {"gt": gt[r0:r0 + side, c0:c0 + side],
-                     "p1": preds[c1][r0:r0 + side, c0:c0 + side],
-                     "p2": preds[c2][r0:r0 + side, c0:c0 + side]}
+            crops = {"gt": gt[r0:r0 + side, c0:c0 + side], "same": p_same[r0:r0 + side, c0:c0 + side]}
             if ens is not None:
                 crops["ens"] = ens[r0:r0 + side, c0:c0 + side]
 
-            # one figure per frame: ground truth | model c1 | model c2 | ensemble
             panels = [("gt", "ground truth"),
-                      ("p1", f"model {c1} | IoU {iou(crops['p1'], crops['gt']):.3f}"),
-                      ("p2", f"model {c2} | IoU {iou(crops['p2'], crops['gt']):.3f}")]
+                      ("same", f"model {eval_ds} (fold {fold}) | IoU {iou(crops['same'], crops['gt']):.3f}")]
             if ens is not None:
-                panels.append(("ens", f"ensemble {args.ensemble_config} | IoU {iou(crops['ens'], crops['gt']):.3f}"))
+                panels.append(("ens", f"ensemble {cross} ({args.n_splits}-fold prob) | IoU {iou(crops['ens'], crops['gt']):.3f}"))
+
             fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 5.6))
             axes[0].set_ylabel("\n".join(textwrap.wrap(fn, 34)) + f"\nfold {fold} | {side}px", fontsize=11)
             for ax in axes:
@@ -195,12 +192,12 @@ def main():
                 masked = np.where(crops[key][..., None], rgb, 0)  # RGB inside mask, black outside
                 ax.imshow(masked, interpolation="nearest")
                 ax.set_title(title, fontsize=13, pad=8)
-            fig.suptitle(f"Paxos{eval_ds} val frame, model {c1} vs model {c2}"
-                         + (f" vs {args.n_splits}-fold {args.ensemble_config} ensemble (mean sigmoid prob)"
+            fig.suptitle(f"Paxos{eval_ds} val frame: model {eval_ds} (fold {fold}, not trained on this split)"
+                         + (f" vs {args.n_splits}-fold {cross} ensemble (mean sigmoid prob, never trained on {eval_ds})"
                             if ens is not None else "")
-                         + f" (RGB inside mask, black outside; common {side}px square window, no resize)",
-                         fontsize=15)
-            fig.tight_layout(rect=[0, 0, 1, 0.94])
+                         + f" — RGB inside mask, black outside; common {side}px square window, no resize",
+                         fontsize=14)
+            fig.tight_layout(rect=[0, 0, 1, 0.93])
             out_path = vis_dir / f"{n_written:02d}_{fn.replace(' ', '_')}"
             fig.savefig(out_path, dpi=140)
             plt.close(fig)
