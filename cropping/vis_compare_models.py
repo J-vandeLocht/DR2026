@@ -3,9 +3,11 @@
 For each eval dataset (2020 / 2025) this picks --n random frames from the val splits
 (the fold is chosen randomly per frame), runs both single-dataset models
 (seg_2020_fold_<f>.pth and seg_2025_fold_<f>.pth of that fold) on the frame, and
-writes one PNG per dataset. Each row has THREE panels of equal size:
+writes one PNG per dataset. Each frame gets FOUR panels of equal size:
 
-    ground-truth region | 2020-model predicted region (IoU) | 2025-model predicted region (IoU)
+    ground-truth region | 2020-model region (IoU) | 2025-model region (IoU)
+    | ensemble region (IoU; mean of sigmoid probabilities over all 5 folds of the
+      --ensemble_config model, default "both" -- same ensembling as production)
 
 Inside the mask the RGB pixels of the frame are shown, everything outside is black.
 All panels of a row are cropped to ONE common square window at native resolution
@@ -101,6 +103,8 @@ def main():
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--configs", nargs="+", default=["2020", "2025"], help="the two models to compare")
     parser.add_argument("--eval_datasets", nargs="+", default=["2020", "2025"], choices=["2020", "2025"])
+    parser.add_argument("--ensemble_config", type=str, default="both",
+                        help="config whose 5 fold models form the probability-ensemble panel")
     args = parser.parse_args()
 
     plt.rcParams.update({"font.size": 11, "axes.titlesize": 13, "axes.labelsize": 10})
@@ -129,6 +133,17 @@ def main():
                         continue
                     models[(cfg, fold)] = load_model(path, args.encoder_name, device)
 
+        ens_models = []
+        for efold in range(args.n_splits):
+            epath = Path(args.models_dir) / f"seg_{args.ensemble_config}_fold_{efold}.pth"
+            if epath.exists():
+                ens_models.append(load_model(epath, args.encoder_name, device))
+            else:
+                print(f"WARNING: missing ensemble model {epath}")
+        use_ensemble = len(ens_models) == args.n_splits
+        if not use_ensemble:
+            print(f"WARNING: ensemble incomplete ({len(ens_models)}/{args.n_splits}) -- 4th panel skipped")
+
         vis_dir = out_dir / f"vis_compare_{eval_ds}"
         vis_dir.mkdir(parents=True, exist_ok=True)
         n_written = 0
@@ -148,27 +163,42 @@ def main():
                 for cfg in (c1, c2):
                     p = (torch.sigmoid(models[(cfg, fold)](inp))[0, 0] > 0.5).cpu().numpy()
                     preds[cfg] = cv2.resize(p.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
-            r0, c0, side = common_square_window([gt, preds[c1], preds[c2]], h, w)
+            ens = None
+            if use_ensemble:
+                with torch.no_grad():
+                    probs = torch.stack([torch.sigmoid(m(inp)) for m in ens_models]).mean(dim=0)
+                ep = (probs[0, 0] > 0.5).cpu().numpy()
+                ens = cv2.resize(ep.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+
+            window_masks = [gt, preds[c1], preds[c2]] + ([ens] if ens is not None else [])
+            r0, c0, side = common_square_window(window_masks, h, w)
             rgb = img[r0:r0 + side, c0:c0 + side]
             crops = {"gt": gt[r0:r0 + side, c0:c0 + side],
                      "p1": preds[c1][r0:r0 + side, c0:c0 + side],
                      "p2": preds[c2][r0:r0 + side, c0:c0 + side]}
+            if ens is not None:
+                crops["ens"] = ens[r0:r0 + side, c0:c0 + side]
 
-            # one figure per frame: ground truth | model c1 | model c2
-            fig, axes = plt.subplots(1, 3, figsize=(5.2 * 3, 5.6))
+            # one figure per frame: ground truth | model c1 | model c2 | ensemble
+            panels = [("gt", "ground truth"),
+                      ("p1", f"model {c1} | IoU {iou(crops['p1'], crops['gt']):.3f}"),
+                      ("p2", f"model {c2} | IoU {iou(crops['p2'], crops['gt']):.3f}")]
+            if ens is not None:
+                panels.append(("ens", f"ensemble {args.ensemble_config} | IoU {iou(crops['ens'], crops['gt']):.3f}"))
+            fig, axes = plt.subplots(1, len(panels), figsize=(5.2 * len(panels), 5.6))
             axes[0].set_ylabel("\n".join(textwrap.wrap(fn, 34)) + f"\nfold {fold} | {side}px", fontsize=11)
             for ax in axes:
                 ax.set_xticks([])
                 ax.set_yticks([])
-            for j, (key, title) in enumerate([("gt", "ground truth"),
-                                              ("p1", f"model {c1} | IoU {iou(crops['p1'], crops['gt']):.3f}"),
-                                              ("p2", f"model {c2} | IoU {iou(crops['p2'], crops['gt']):.3f}")]):
+            for j, (key, title) in enumerate(panels):
                 ax = axes[j]
                 masked = np.where(crops[key][..., None], rgb, 0)  # RGB inside mask, black outside
                 ax.imshow(masked, interpolation="nearest")
-                ax.set_title(title, fontsize=14, pad=8)
-            fig.suptitle(f"Paxos{eval_ds} val frame, model {c1} vs model {c2} "
-                         f"(RGB inside mask, black outside; common {side}px square window, no resize)",
+                ax.set_title(title, fontsize=13, pad=8)
+            fig.suptitle(f"Paxos{eval_ds} val frame, model {c1} vs model {c2}"
+                         + (f" vs {args.n_splits}-fold {args.ensemble_config} ensemble (mean sigmoid prob)"
+                            if ens is not None else "")
+                         + f" (RGB inside mask, black outside; common {side}px square window, no resize)",
                          fontsize=15)
             fig.tight_layout(rect=[0, 0, 1, 0.94])
             out_path = vis_dir / f"{n_written:02d}_{fn.replace(' ', '_')}"
