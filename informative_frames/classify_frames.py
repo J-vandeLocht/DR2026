@@ -12,10 +12,12 @@ splits): fold i trains on the rows with fold==i & split=="train" and validates o
 fold==i & split=="val", so the val frames of fold i were never seen during training.
 For config "both", fold i is the concatenation of fold i of both datasets (2025 + 2020).
 
-The best-val-PR-AUC model is saved to <models_dir>/cls_<config>_fold_<fold>.pth
-(consumed by informative_frames/evaluate_classification.py), confusion matrices to
-<models_dir>/Selection_B4_<config>_fold<fold>_<timestamp>_cm_epoch_<e>.png, and
-TensorBoard logs to runs/.
+Training stops early after --patience epochs without val PR-AUC improvement
+(same early stopping as cropping/train_segmentation.py); the best-val-PR-AUC model is
+saved to <models_dir>/cls_<config>_fold_<fold>.pth (consumed by
+informative_frames/evaluate_classification.py), confusion matrices to
+<models_dir>/Selection_B4_<config>_fold<fold>_<timestamp>_cm_epoch_<e>.png, a per-epoch
+log to <models_dir>/cls_<config>_fold_<fold>_log.json, and TensorBoard logs to runs/.
 
 Run one fold from the repo root:
     python -u -m informative_frames.classify_frames --config 2025 --fold 0
@@ -23,6 +25,7 @@ All 3 configs x 5 folds: sbatch scripts/train_classify_xdomain.sh
 """
 
 import argparse
+import json
 import os
 from datetime import datetime
 from pathlib import Path
@@ -139,6 +142,8 @@ def main():
                         help="Dir with split_info_5fold_paxos<ds>_from_cropping.csv.")
     parser.add_argument("--models_dir", type=str, default="informative_frames/models_xdomain")
     parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--patience", type=int, default=3,
+                        help="Early stopping: stop after this many epochs without val PR-AUC improvement.")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=4)
@@ -176,7 +181,10 @@ def main():
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
 
     best_pr_auc = 0.0
+    best_epoch = -1
+    log = []
     model_save_path = os.path.join(args.models_dir, f"cls_{args.config}_fold_{args.fold}.pth")
+    log_path = os.path.join(args.models_dir, f"cls_{args.config}_fold_{args.fold}_log.json")
 
     for epoch in range(args.epochs):
         model.train()
@@ -213,6 +221,9 @@ def main():
 
         scheduler.step()
         print(f"Fold {args.fold} Ep {epoch} | PR-AUC: {pr_auc:.4f} | F1: {f1:.4f} | Loss: {v_loss:.4f}")
+        log.append({"epoch": epoch, "train_loss": float(t_loss), "val_loss": float(v_loss),
+                    "acc": float(acc), "f1": float(f1), "precision": float(prec), "recall": float(rec),
+                    "roc_auc": float(roc_auc), "pr_auc": float(pr_auc)})
 
         writer.add_scalar('Loss/train', t_loss, epoch)
         writer.add_scalar('Loss/val', v_loss, epoch)
@@ -226,11 +237,22 @@ def main():
 
         if pr_auc > best_pr_auc:
             best_pr_auc = pr_auc
+            best_epoch = epoch
             torch.save(model.state_dict(), model_save_path)
             save_confusion_matrix(y_true, y_pred, epoch, run_name, args.models_dir)
 
+        if epoch - best_epoch >= args.patience:
+            print(f"   -> Early stopping: no val PR-AUC improvement for {args.patience} epochs "
+                  f"(best {best_pr_auc:.4f} at epoch {best_epoch + 1})")
+            break
+
     writer.close()
-    print(f"Saved best model (val PR-AUC {best_pr_auc:.4f}) to {model_save_path}")
+    with open(log_path, "w") as f:
+        json.dump({"config": args.config, "fold": args.fold, "epochs": args.epochs,
+                   "epochs_run": len(log), "patience": args.patience,
+                   "best_epoch": best_epoch, "best_val_pr_auc": best_pr_auc, "history": log}, f, indent=2)
+    print(f"Finished config={args.config} fold={args.fold} after {len(log)}/{args.epochs} epochs. "
+          f"Best val PR-AUC: {best_pr_auc:.4f} (epoch {best_epoch + 1}) -> {model_save_path}")
 
 
 if __name__ == "__main__":
