@@ -16,7 +16,7 @@
 #
 # Prerequisites (run from the repo root first):
 #   python -u -m informative_frames.make_splits_from_cropping   # split CSVs with label + val fold
-#   trained checkpoints in cropping/models/{2020,2025,both} (*fold_<i>* glob)
+#   trained checkpoints in cropping/models_xdomain (seg_<cfg>_fold_<i>.pth)
 #   raw frames in data/informative_frames/frames_raw_extract{,_paxos2020}
 #
 # Usage: sbatch scripts/crop_frames_xdomain.sh
@@ -28,7 +28,7 @@ conda activate job_new
 DATASETS=${DATASETS:-"2025 2020"}
 CONFIGS=${CONFIGS:-"2020 2025 both"}
 IMG_BASE=${IMG_BASE:-data/informative_frames}
-MODELS_BASE=${MODELS_BASE:-cropping/models}
+MODELS_BASE=${MODELS_BASE:-cropping/models_xdomain}   # shared dir with seg_<cfg>_fold_<i>.pth for all configs
 SPLITS_DIR=${SPLITS_DIR:-informative_frames}
 BATCH_SIZE=${BATCH_SIZE:-16}
 
@@ -44,7 +44,7 @@ for ds in $DATASETS; do
     python -u -m informative_frames.crop_frames \
       --dataset "$ds" --config "$cfg" \
       --input_dir "$IN_DIR" --split_csv "$SPLIT_CSV" \
-      --model_dir "$MODELS_BASE/$cfg" \
+      --model_dir "$MODELS_BASE" \
       --output_dir "$OUT_DIR" \
       --batch_size "$BATCH_SIZE"
   done

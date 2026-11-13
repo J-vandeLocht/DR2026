@@ -11,7 +11,7 @@ unknown to the splits) the full n-fold ensemble is used, averaging sigmoid PROBA
 Run from the repo root, e.g. Paxos2025 videos with the Paxos2025 models:
     python -u -m informative_frames.extract_inf_frames \
       --dataset 2025 --video_dir data/dr_videos \
-      --seg_model_dir cropping/models/2025 --cls_model_dir informative_frames/models_xdomain \
+      --seg_model_dir cropping/models_xdomain --cls_model_dir informative_frames/models_xdomain \
       --seg_config 2025 --cls_config 2025 --out_base data/ensemble_results_paxos2025_by_2025
 See scripts/extract_inf_frames_xdomain.sh for all three x-domain runs.
 """
@@ -137,9 +137,12 @@ def main():
     seg_ensemble = []
     cls_ensemble = []
     for fold in range(args.n_splits):
-        seg_paths = sorted(SEG_MODEL_DIR.glob(f"*fold_{fold}*.pth"))
+        seg_paths = sorted(SEG_MODEL_DIR.glob(f"seg_{args.seg_config}_fold_{fold}*.pth")) if args.seg_config else []
         if not seg_paths:
-            raise FileNotFoundError(f"Could not find seg model for fold {fold} in {SEG_MODEL_DIR}")
+            seg_paths = sorted(SEG_MODEL_DIR.glob(f"*fold_{fold}*.pth"))
+        if not seg_paths:
+            raise FileNotFoundError(f"Could not find seg model for fold {fold} in {SEG_MODEL_DIR} "
+                                    f"(tried seg_{args.seg_config}_fold_{fold}*.pth and *fold_{fold}*)")
         sm = smp.UnetPlusPlus(encoder_name="efficientnet-b4", in_channels=3, classes=1).to(DEVICE).eval()
         sm.load_state_dict(torch.load(seg_paths[0], map_location=DEVICE))
         seg_ensemble.append(sm)

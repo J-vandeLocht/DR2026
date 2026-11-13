@@ -14,27 +14,27 @@
 # video unknown to the splits) the full 5-fold mean-sigmoid-probability ensemble.
 #
 # Prerequisites: trained x-domain models
-#   cropping/models/{2020,2025}/seg_<cfg>_fold_<i>.pth   (cropping/models_xdomain copied, or trained with --out_dir)
+#   cropping/models_xdomain/seg_<cfg>_fold_<i>.pth        (shared dir; matched per config)
 #   informative_frames/models_xdomain/cls_<cfg>_fold_<i>.pth
 #
 # The three runs (env vars, then sbatch):
 #
 # 1) Paxos2025 videos with the Paxos2025 models (per-video val-fold model):
 #      DATASET=2025 VIDEO_DIR=data/dr_videos \
-#      SEG_MODEL_DIR=cropping/models/2025 CLS_MODEL_DIR=informative_frames/models_xdomain \
+#      SEG_MODEL_DIR=cropping/models_xdomain CLS_MODEL_DIR=informative_frames/models_xdomain \
 #      SEG_CONFIG=2025 CLS_CONFIG=2025 OUT_BASE=data/ensemble_results_paxos2025_by_2025 \
 #      sbatch scripts/extract_inf_frames_xdomain.sh
 #
 # 2) Paxos2020 videos with the Paxos2020 models (per-video val-fold model):
 #      DATASET=2020 VIDEO_DIR=experiments/Paxos_2020/data \
-#      SEG_MODEL_DIR=cropping/models/2020 CLS_MODEL_DIR=informative_frames/models_xdomain \
+#      SEG_MODEL_DIR=cropping/models_xdomain CLS_MODEL_DIR=informative_frames/models_xdomain \
 #      SEG_CONFIG=2020 CLS_CONFIG=2020 \
 #      OUT_BASE=experiments/Paxos_2020/data/ensemble_results_paxos2020_by_2020 \
 #      sbatch scripts/extract_inf_frames_xdomain.sh
 #
 # 3) Paxos2020 videos with the Paxos2025 models (cross-dataset -> 5-fold ensemble):
 #      DATASET=2020 VIDEO_DIR=experiments/Paxos_2020/data \
-#      SEG_MODEL_DIR=cropping/models/2025 CLS_MODEL_DIR=informative_frames/models_xdomain \
+#      SEG_MODEL_DIR=cropping/models_xdomain CLS_MODEL_DIR=informative_frames/models_xdomain \
 #      SEG_CONFIG=2025 CLS_CONFIG=2025 \
 #      OUT_BASE=experiments/Paxos_2020/data/ensemble_results_paxos2020_by_2025 \
 #      sbatch scripts/extract_inf_frames_xdomain.sh
