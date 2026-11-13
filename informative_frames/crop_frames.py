@@ -2,8 +2,9 @@
 
 For each (dataset, config) pair -- dataset 2025 = data/informative_frames/frames_raw_extract,
 dataset 2020 = data/informative_frames/frames_raw_extract_paxos2020, config in {2020, 2025, both}
-with the checkpoints in cropping/models/<config> (matched by the *fold_<i>* glob, same as
-cropping/segment_frames.py) -- every labeled frame of the dataset is cropped and written to
+with the checkpoints in cropping/models_xdomain (seg_<config>_fold_<i>.pth; a per-config
+folder like cropping/models/<config> also works via the *fold_<i>* fallback glob) -- every
+labeled frame of the dataset is cropped and written to
 <output_dir>/<label>/<filename> (ImageFolder layout with classes 0/1, so classify_frames.py-style
 training can consume each folder directly). Labels and per-frame folds come from the split CSV
 built by informative_frames/make_splits_from_cropping.py (split_info_5fold_paxos<dataset>_from_cropping.csv,
@@ -28,7 +29,7 @@ Run a single folder from the repo root:
       --dataset 2025 --config 2025 \
       --input_dir data/informative_frames/frames_raw_extract \
       --split_csv informative_frames/split_info_5fold_paxos2025_from_cropping.csv \
-      --model_dir cropping/models/2025 \
+      --model_dir cropping/models_xdomain \
       --output_dir data/informative_frames/frames_cropped_paxos2025_by_2025
 """
 
@@ -55,7 +56,8 @@ def parse_args():
     parser.add_argument("--split_csv", type=str, required=True,
                         help="split_info_5fold_paxos<dataset>_from_cropping.csv (label + val fold per frame).")
     parser.add_argument("--model_dir", type=str, required=True,
-                        help="Checkpoint folder of the config, e.g. cropping/models/2025; *fold_<i>* glob.")
+                        help="Checkpoint dir, e.g. cropping/models_xdomain; prefers seg_<config>_fold_<i>*.pth, "
+                             "falls back to *fold_<i>* (per-config folder).")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Output folder; cropped frames land in <output_dir>/<label>/<filename>.")
     parser.add_argument("--img_size", type=int, default=768, help="Model input size (as trained).")
@@ -73,13 +75,16 @@ def get_inference_transforms(img_size=768):
     ])
 
 
-def load_ensemble(model_dir, n_splits, encoder_name, device):
+def load_ensemble(model_dir, config, n_splits, encoder_name, device):
     model_dir = Path(model_dir)
     models = []
     for fold in range(n_splits):
-        model_paths = sorted(model_dir.glob(f"*fold_{fold}*"))
+        model_paths = sorted(model_dir.glob(f"seg_{config}_fold_{fold}*.pth"))
         if not model_paths:
-            raise FileNotFoundError(f"Could not find model for fold {fold} in {model_dir}")
+            model_paths = sorted(model_dir.glob(f"*fold_{fold}*"))
+        if not model_paths:
+            raise FileNotFoundError(f"Could not find model for fold {fold} in {model_dir} "
+                                    f"(tried seg_{config}_fold_{fold}*.pth and *fold_{fold}*)")
         model = smp.UnetPlusPlus(encoder_name=encoder_name, encoder_weights=None, in_channels=3, classes=1)
         model.load_state_dict(torch.load(model_paths[0], map_location=device))
         model.to(device).eval()
@@ -151,7 +156,7 @@ def main():
     print(f"dataset={args.dataset} config={args.config}: cropping {len(files)} frames from {input_dir} "
           f"into {output_dir}")
 
-    models = load_ensemble(args.model_dir, args.n_splits, args.encoder_name, device)
+    models = load_ensemble(args.model_dir, args.config, args.n_splits, args.encoder_name, device)
     print(f"Loaded {len(models)} fold models from {args.model_dir} on {device}")
 
     in_dataset = (args.config == args.dataset) or (args.config == "both")

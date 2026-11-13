@@ -52,20 +52,29 @@ def crop_stem(filename):
     return m.group("stem") if m else Path(filename).stem
 
 
-def load_cropping_folds(splits_path, n_splits):
+def load_stem_folds(splits_path, n_splits):
+    """Map video stem -> fold whose val split contains it (from a cropping splits json).
+
+    Used to pick, per video, the fold model that was NOT trained on that video."""
     with open(splits_path) as f:
         splits = json.load(f)
     stem_fold = {}
-    all_stems = set()
     for fold in range(n_splits):
-        val = splits[f"fold_{fold}"]["val"]
-        for fn in splits[f"fold_{fold}"]["train"] + val:
-            all_stems.add(crop_stem(fn))
-        for fn in val:
+        for fn in splits[f"fold_{fold}"]["val"]:
             s = crop_stem(fn)
             assert s not in stem_fold, f"{splits_path}: video {s} in the val split of multiple folds"
             stem_fold[s] = fold
-    return stem_fold, all_stems
+    return stem_fold
+
+
+def load_cropping_folds(splits_path, n_splits):
+    with open(splits_path) as f:
+        splits = json.load(f)
+    all_stems = set()
+    for fold in range(n_splits):
+        for fn in splits[f"fold_{fold}"]["train"] + splits[f"fold_{fold}"]["val"]:
+            all_stems.add(crop_stem(fn))
+    return load_stem_folds(splits_path, n_splits), all_stems
 
 
 def load_labels(label_csv):
