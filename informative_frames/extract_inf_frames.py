@@ -1,4 +1,23 @@
+"""Full ensemble production pipeline: videos -> cleaned clips + per-frame prob txt + plot.
+
+Model choice per video follows the same rule as cropping/evaluate_segmentation.py:
+with --dataset given, a video is scored by the fold-i model of its val fold (from
+<splits_dir>/splits_<dataset>.json, the cropping splits) when the model config matches
+the dataset (--seg_config/--cls_config == --dataset) -- i.e. ONLY the model that was
+NOT trained on that video; otherwise (config is the other dataset, or the video is
+unknown to the splits) the full n-fold ensemble is used, averaging sigmoid PROBABILITIES
+(not logits). Without --dataset the full ensemble is used for every video (old behaviour).
+
+Run from the repo root, e.g. Paxos2025 videos with the Paxos2025 models:
+    python -u -m informative_frames.extract_inf_frames \
+      --dataset 2025 --video_dir data/dr_videos \
+      --seg_model_dir cropping/models/2025 --cls_model_dir informative_frames/models_xdomain \
+      --seg_config 2025 --cls_config 2025 --out_base data/ensemble_results_paxos2025_by_2025
+See scripts/extract_inf_frames_xdomain.sh for all three x-domain runs.
+"""
+
 import cv2
+import re
 import torch
 import numpy as np
 import argparse
@@ -14,6 +33,7 @@ from tqdm import tqdm
 
 from misc.utils import apply_clahe_cv2
 from .crop_frames import crop_and_pad, get_largest_component_mask, pad_to_square_info
+from .make_splits_from_cropping import load_stem_folds
 
 
 def parse_args():
@@ -21,6 +41,7 @@ def parse_args():
     parser.add_argument('--gpu_id', type=int, default=0)
     parser.add_argument('--total_gpus', type=int, default=1)
     parser.add_argument('--limit', type=int, default=None, help="Max videos per worker.")
+
     parser.add_argument('--video_dir', type=str, default='data/dr_videos')
     parser.add_argument('--seg_model_dir', type=str, default='cropping/models')
     parser.add_argument('--cls_model_dir', type=str, default='informative_frames/models')
@@ -29,6 +50,17 @@ def parse_args():
                         help="Guaranteed minimum length of the cleaned clip.")
     parser.add_argument('--infer_batch_size', type=int, default=16,
                         help="Frames batched per ensemble forward pass in PASS 1.")
+    parser.add_argument('--dataset', type=str, default=None, choices=["2020", "2025"],
+                        help="Cohort of the videos in --video_dir. If given, each video is scored by the "
+                             "fold model of its val fold when the model config matches the dataset, else by "
+                             "the full ensemble. Default None: always full ensemble (old behaviour).")
+    parser.add_argument('--seg_config', type=str, default=None, choices=["2020", "2025", "both"],
+                        help="Config of the seg models in --seg_model_dir; default: derived from the dir name.")
+    parser.add_argument('--cls_config', type=str, default=None, choices=["2020", "2025", "both"],
+                        help="Config of the cls models in --cls_model_dir; default: derived from cls_<config>_fold_<i>.pth names.")
+    parser.add_argument('--splits_dir', type=str, default='cropping',
+                        help="Dir with splits_<dataset>.json (cropping splits) used for the per-video val fold.")
+    parser.add_argument('--n_splits', type=int, default=5)
     return parser.parse_args()
 
 
@@ -69,6 +101,23 @@ def main():
     SEG_MODEL_DIR = Path(args.seg_model_dir)
     CLS_MODEL_DIR = Path(args.cls_model_dir)
 
+    if args.seg_config is None:
+        name = SEG_MODEL_DIR.name
+        args.seg_config = name if name in ("2020", "2025", "both") else None
+    if args.cls_config is None:
+        for p in sorted(CLS_MODEL_DIR.glob("cls_*_fold_*.pth")):
+            m = re.fullmatch(r"cls_(.+)_fold_\d+\.pth", p.name)
+            if m:
+                args.cls_config = m.group(1)
+                break
+
+    stem_fold = {}
+    if args.dataset:
+        stem_fold = load_stem_folds(Path(args.splits_dir) / f"splits_{args.dataset}.json", args.n_splits)
+        print(f"dataset={args.dataset}: mapped {len(stem_fold)} videos to their val fold "
+              f"from {args.splits_dir}/splits_{args.dataset}.json "
+              f"(seg_config={args.seg_config}, cls_config={args.cls_config})")
+
     OUT_BASE = Path(args.out_base)
     TXT_DIR = OUT_BASE / 'txt_files'
     PLOT_DIR = OUT_BASE / 'plots'
@@ -84,16 +133,25 @@ def main():
     MIN_INFORMATIVE_FRAMES = args.min_informative_frames
     INFER_BATCH_SIZE = args.infer_batch_size
 
-    print(f"Loading 5-Fold Unet++ (B4) and Classification (B4) on {DEVICE}...")
+    print(f"Loading {args.n_splits}-fold Unet++ (B4) and Classification (B4) on {DEVICE}...")
     seg_ensemble = []
     cls_ensemble = []
-    for fold in range(5):
+    for fold in range(args.n_splits):
+        seg_paths = sorted(SEG_MODEL_DIR.glob(f"*fold_{fold}*.pth"))
+        if not seg_paths:
+            raise FileNotFoundError(f"Could not find seg model for fold {fold} in {SEG_MODEL_DIR}")
         sm = smp.UnetPlusPlus(encoder_name="efficientnet-b4", in_channels=3, classes=1).to(DEVICE).eval()
-        sm.load_state_dict(torch.load(list(SEG_MODEL_DIR.glob(f"*fold_{fold}*.pth"))[0], map_location=DEVICE))
+        sm.load_state_dict(torch.load(seg_paths[0], map_location=DEVICE))
         seg_ensemble.append(sm)
+
+        cls_paths = sorted(CLS_MODEL_DIR.glob(f"cls_{args.cls_config}_fold_{fold}*.pth")) if args.cls_config else []
+        if not cls_paths:
+            cls_paths = sorted(CLS_MODEL_DIR.glob(f"*Fold{fold}*.pth"))
+        if not cls_paths:
+            raise FileNotFoundError(f"Could not find cls model for fold {fold} in {CLS_MODEL_DIR}")
         cm = models.efficientnet_b4()
         cm.classifier[1] = torch.nn.Linear(cm.classifier[1].in_features, 1)
-        cm.load_state_dict(torch.load(list(CLS_MODEL_DIR.glob(f"*Fold{fold}*.pth"))[0], map_location=DEVICE))
+        cm.load_state_dict(torch.load(cls_paths[0], map_location=DEVICE))
         cm.to(DEVICE).eval()
         cls_ensemble.append(cm)
 
@@ -112,9 +170,20 @@ def main():
 
     for v_path in tqdm(my_vids, desc=f"Overall GPU {args.gpu_id}"):
         vid_id = v_path.stem
+
+        fold = stem_fold.get(vid_id) if stem_fold else None
+        seg_single = args.dataset is not None and args.seg_config == args.dataset and fold is not None
+        cls_single = args.dataset is not None and args.cls_config == args.dataset and fold is not None
+        seg_models = [seg_ensemble[fold]] if seg_single else seg_ensemble
+        cls_models = [cls_ensemble[fold]] if cls_single else cls_ensemble
+        seg_mode = f"fold {fold} (val fold, not in its training)" if seg_single else f"{len(seg_ensemble)}-fold prob ensemble"
+        cls_mode = f"fold {fold} (val fold, not in its training)" if cls_single else f"{len(cls_ensemble)}-fold prob ensemble"
+        print(f"{vid_id}: seg={seg_mode} | cls={cls_mode}")
+
         out_vid_path = VID_DIR / f"CLEAN_{vid_id}.mp4"
         txt_path = TXT_DIR / f"{vid_id}.txt"
         plot_path = PLOT_DIR / f"{vid_id}.png"
+
         if out_vid_path.exists() and txt_path.exists() and plot_path.exists():
             print(f"Skipping {vid_id}")
             continue
@@ -147,7 +216,7 @@ def main():
                 ]).to(DEVICE)
 
                 with torch.no_grad(), amp_ctx():
-                    m_preds = torch.stack([torch.sigmoid(m(seg_in)) for m in seg_ensemble])
+                    m_preds = torch.stack([torch.sigmoid(m(seg_in)) for m in seg_models])
                     mean_mask_batch = torch.mean(m_preds, dim=0).squeeze(1).float().cpu().numpy()
 
                 per_frame_info = [(None, None, None, 0)] * len(batch_frames)
@@ -172,7 +241,7 @@ def main():
                 if crops:
                     cls_in = torch.stack(crops).to(DEVICE)
                     with torch.no_grad(), amp_ctx():
-                        c_preds = torch.stack([torch.sigmoid(m(cls_in)) for m in cls_ensemble])
+                        c_preds = torch.stack([torch.sigmoid(m(cls_in)) for m in cls_models])
                         mean_probs = torch.mean(c_preds, dim=0).squeeze(1).float().cpu().numpy()
                     for slot_idx, bi in enumerate(crop_slots):
                         probs[bi] = float(mean_probs[slot_idx])
@@ -189,7 +258,9 @@ def main():
         informative_idx, threshold_used, used_fallback = select_informative_frames(
             all_probs, CONF_THRESHOLD, MIN_CONF_THRESHOLD, THRESHOLD_STEP, MIN_INFORMATIVE_FRAMES)
         informative_idx_set = set(int(i) for i in informative_idx)
+
         status = "fallback top-N" if used_fallback else f"threshold={threshold_used}"
+
         print(f"{vid_id}: {len(informative_idx_set)}/{len(frame_results)} informative frames ({status})")
 
         # PASS 2: Export Cropped Video (informative frames only)
