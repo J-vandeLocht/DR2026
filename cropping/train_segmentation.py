@@ -1,17 +1,13 @@
-"""Train the fundus-cropping segmentation model (Unet++ / EfficientNet-B4) for the
-cross-dataset experiment: one run per dataset combo (2020 / 2025 / both) and fold.
+"""Train the fundus-cropping segmentation model (Unet++ / EfficientNet-B4) for Paxos2025.
 
-Splits come from cropping/splits_<year>.json (cropping/make_splits_simple.py). For
---dataset both, fold i of 2020 and fold i of 2025 are merged (train = train_2020 +
-train_2025, val = val_2020 + val_2025). Single-dataset runs should use double the
-epochs of 'both' runs (the cohorts are about the same size) -- scripts/
-train_cropping_xdomain.sh does this automatically.
-
-Saves the best-val-IoU model to <out_dir>/seg_<dataset>_fold_<fold>.pth and a
-per-epoch log to <...>_log.json.
+One run per fold: fold i trains on the train part of cropping/splits.json fold_i and
+validates on its val part (the videos of that fold are never seen during training).
+Saves the best-val-IoU model to <out_dir>/seg_fold_<fold>.pth and a per-epoch log to
+<out_dir>/seg_fold_<fold>_log.json.
 
 Run from the repo root:
-    python -u -m cropping.train_segmentation --dataset 2025 --fold 0 --epochs 40
+    python -u -m cropping.train_segmentation --fold 0 --epochs 40
+All 5 folds: sbatch scripts/train_cropping.sh
 """
 
 import argparse
@@ -35,31 +31,18 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_fold(ann_dir, dataset, fold):
-    """Return (train_df, val_df) for the given dataset combo and fold."""
-    ann_dir = Path(ann_dir)
-    if dataset == "both":
-        dfs, train_files, val_files = [], [], []
-        for year in ("2020", "2025"):
-            dfs.append(pd.read_csv(ann_dir / f"annotations_cropping_{year}.csv"))
-            with open(ann_dir / f"splits_{year}.json") as f:
-                s = json.load(f)[f"fold_{fold}"]
-            train_files += s["train"]
-            val_files += s["val"]
-        df = pd.concat(dfs, ignore_index=True)
-    else:
-        df = pd.read_csv(ann_dir / f"annotations_cropping_{dataset}.csv")
-        with open(ann_dir / f"splits_{dataset}.json") as f:
-            s = json.load(f)[f"fold_{fold}"]
-        train_files, val_files = s["train"], s["val"]
-    return df[df["filename"].isin(train_files)], df[df["filename"].isin(val_files)]
+def load_fold(ann_csv, splits_path, fold):
+    """Return (train_df, val_df) for the given fold of the Paxos2025 cropping splits."""
+    df = pd.read_csv(ann_csv)
+    with open(splits_path) as f:
+        s = json.load(f)[f"fold_{fold}"]
+    return df[df["filename"].isin(s["train"])], df[df["filename"].isin(s["val"])]
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--dataset", choices=["2020", "2025", "both"], default="both")
     parser.add_argument("--fold", type=int, default=0, help="Fold index 0..4 (its val part is held out).")
-    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--epochs", type=int, default=40)
     parser.add_argument("--patience", type=int, default=3,
                         help="Early stopping: stop after this many epochs without val IoU improvement.")
     parser.add_argument("--batch_size", type=int, default=4)
@@ -70,8 +53,9 @@ def main():
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--img_dir", type=str, default="cropping/frames_to_annotate_larger")
-    parser.add_argument("--ann_dir", type=str, default="cropping")
-    parser.add_argument("--out_dir", type=str, default="cropping/models_xdomain")
+    parser.add_argument("--ann_csv", type=str, default="cropping/annotations_cropping_2025.csv")
+    parser.add_argument("--splits_path", type=str, default="cropping/splits.json")
+    parser.add_argument("--out_dir", type=str, default="cropping/models")
     parser.add_argument("--encoder_name", type=str, default="efficientnet-b4")
     parser.add_argument("--encoder_weights", type=str, default="imagenet",
                         help="'imagenet' or 'none' for random init.")
@@ -86,8 +70,8 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    train_df, val_df = load_fold(args.ann_dir, args.dataset, args.fold)
-    print(f"dataset={args.dataset} fold={args.fold}: {len(train_df)} train / {len(val_df)} val frames")
+    train_df, val_df = load_fold(args.ann_csv, args.splits_path, args.fold)
+    print(f"fold={args.fold}: {len(train_df)} train / {len(val_df)} val frames")
 
     train_ds = FundusDataset(train_df, args.img_dir, get_transforms(train=True, img_size=args.img_size))
     val_ds = FundusDataset(val_df, args.img_dir, get_transforms(train=False, img_size=args.img_size))
@@ -109,8 +93,8 @@ def main():
     loss_fn = smp.losses.DiceLoss(smp.losses.BINARY_MODE, from_logits=True)
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
-    model_save_path = out_dir / f"seg_{args.dataset}_fold_{args.fold}.pth"
-    log_path = out_dir / f"seg_{args.dataset}_fold_{args.fold}_log.json"
+    model_save_path = out_dir / f"seg_fold_{args.fold}.pth"
+    log_path = out_dir / f"seg_fold_{args.fold}_log.json"
 
     best_iou = -1.0  # guarantees a checkpoint is saved even if val IoU stays 0
     best_epoch = -1
@@ -147,7 +131,7 @@ def main():
         iou = smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro").item()
         epoch_log = {"epoch": epoch, "train_loss": float(np.mean(train_loss)), "val_iou": iou}
         log.append(epoch_log)
-        print(f"dataset={args.dataset} Fold {args.fold} | Epoch {epoch + 1}/{args.epochs} | "
+        print(f"Fold {args.fold} | Epoch {epoch + 1}/{args.epochs} | "
               f"Train Loss: {epoch_log['train_loss']:.4f} | Val IoU: {iou:.4f}")
 
         if iou > best_iou:
@@ -163,10 +147,10 @@ def main():
             break
 
     with open(log_path, "w") as f:
-        json.dump({"dataset": args.dataset, "fold": args.fold, "epochs": args.epochs,
+        json.dump({"fold": args.fold, "epochs": args.epochs,
                    "epochs_run": len(log), "stopped_early": stopped_early,
                    "best_epoch": best_epoch, "best_val_iou": best_iou, "history": log}, f, indent=2)
-    print(f"Finished dataset={args.dataset} fold={args.fold} after {len(log)}/{args.epochs} epochs. "
+    print(f"Finished fold={args.fold} after {len(log)}/{args.epochs} epochs. "
           f"Best Val IoU: {best_iou:.4f} (epoch {best_epoch + 1})")
 
 
