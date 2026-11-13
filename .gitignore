@@ -7,12 +7,13 @@ cropping/models/
 cropping/eval_xdomain/vis_compare_*/
 data/2024_Paxos_Frames
 data/ensemble_results_*/
-data/informative_frames/
+data/informative_frames
 data/stratified_splits/split_*/
 data/matched_frames/
 data/results/
 dino/dinov3/
 informative_frames/models/
+informative_frames/models_xdomain/
 mil/models/
 transformer/models/
 *.pt
