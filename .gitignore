@@ -4,15 +4,17 @@ classifier/cropped_classifier_frames/
 classifier/models/
 cropping/frames_to_annotate_larger/
 cropping/models/
+cropping/eval_xdomain/vis_compare_*/
 data/2024_Paxos_Frames
 data/dr_videos
 data/ensemble_results_*/
-data/informative_frames/
+data/informative_frames
 data/stratified_splits/split_*/
 data/matched_frames/
 data/results/
 dino/dinov3/
 informative_frames/models/
+informative_frames/models_xdomain/
 mil/models/
 transformer/models/
 *.pt
@@ -34,3 +36,5 @@ data/multi_eval_paxos2025_binary/
 tmp/
 occlusion_results/
 transformer_attention_analysis/
+.idea/
+slurm*.out
