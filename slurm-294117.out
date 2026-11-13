@@ -1,1 +1,0 @@
-/home/s6jovand/.conda/envs/job_new/bin/python: Error while finding module specification for 'cropping.evaluate_segmentation' (ModuleNotFoundError: No module named 'cropping')
