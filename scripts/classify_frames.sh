@@ -11,4 +11,6 @@ source ~/.bashrc
 conda activate job_new
 cd ..
 
-python -u -m informative_frames.classify_frames
+# args are forwarded, e.g.: sbatch scripts/classify_frames.sh -- --config 2025 --fold 0
+# (all 3 configs x 5 folds: sbatch scripts/train_classify_xdomain.sh)
+python -u -m informative_frames.classify_frames "$@"

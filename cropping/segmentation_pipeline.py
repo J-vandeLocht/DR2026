@@ -60,14 +60,14 @@ class FundusDataset(Dataset):
         return image, mask
 
 
-def get_transforms(train=True):
+def get_transforms(train=True, img_size=IMG_SIZE):
     if train:
         return albu.Compose([
             # 1. Minor Crop & Rescale
             # Takes a random 80% to 100% chunk of the original image, keeps it square,
-            # and resizes it to IMG_SIZE.
+            # and resizes it to img_size.
             albu.RandomResizedCrop(
-                size=(IMG_SIZE, IMG_SIZE),
+                size=(img_size, img_size),
                 scale=(0.8, 1.0),
                 ratio=(1.0, 1.0),
                 p=1.0
@@ -94,7 +94,7 @@ def get_transforms(train=True):
     else:
         # Validation: Only Resize and Normalize
         return albu.Compose([
-            albu.Resize(height=IMG_SIZE, width=IMG_SIZE),
+            albu.Resize(height=img_size, width=img_size),
             albu.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
             ToTensorV2()
         ])
