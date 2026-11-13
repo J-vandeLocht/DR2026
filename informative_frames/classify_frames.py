@@ -1,27 +1,23 @@
-"""Train the informative-frame selection classifier for the cross-dataset experiment.
+"""Train the informative-frame selection classifier for Paxos2025.
 
-Three variants (configs) are trained, each over 5 folds: 2020 (Paxos2020 only),
-2025 (Paxos2025 only) and both (both cohorts concatenated per fold). Variant <config>
-is trained on the frames cropped by the SAME cropping config, i.e.
-< img_base>/frames_cropped_paxos<ds>_by_<config>/<label>/<filename> (the 6 folders from
-scripts/crop_frames_xdomain.sh; each frame was cropped by the segmentation model that
-never saw it, per cropping/evaluate_segmentation.py). The folds come from the split
-CSVs built by informative_frames/make_splits_from_cropping.py
-(<split_dir>/split_info_5fold_paxos<ds>_from_cropping.csv, reused from the cropping
-splits): fold i trains on the rows with fold==i & split=="train" and validates on
-fold==i & split=="val", so the val frames of fold i were never seen during training.
-For config "both", fold i is the concatenation of fold i of both datasets (2025 + 2020).
+One run per fold: fold i trains on the rows with fold==i & split=="train" of the split
+CSV built by informative_frames/make_splits_from_cropping.py
+(split_info_5fold_paxos2025_from_cropping.csv, reused from the cropping splits) and
+validates on fold==i & split=="val", so the val frames of fold i were never seen during
+training. The training images are the frames cropped by informative_frames/crop_frames.py
+(<img_base>/frames_cropped/<label>/<filename>, each cropped by the fold model of its own
+val fold).
 
 Training stops early after --patience epochs without val PR-AUC improvement
 (same early stopping as cropping/train_segmentation.py); the best-val-PR-AUC model is
-saved to <models_dir>/cls_<config>_fold_<fold>.pth (consumed by
+saved to <models_dir>/cls_fold_<fold>.pth (consumed by
 informative_frames/evaluate_classification.py), confusion matrices to
-<models_dir>/Selection_B4_<config>_fold<fold>_<timestamp>_cm_epoch_<e>.png, a per-epoch
-log to <models_dir>/cls_<config>_fold_<fold>_log.json, and TensorBoard logs to runs/.
+<models_dir>/Selection_B4_fold<fold>_<timestamp>_cm_epoch_<e>.png, a per-epoch
+log to <models_dir>/cls_fold_<fold>_log.json, and TensorBoard logs to runs/.
 
 Run one fold from the repo root:
-    python -u -m informative_frames.classify_frames --config 2025 --fold 0
-All 3 configs x 5 folds: sbatch scripts/train_classify_xdomain.sh
+    python -u -m informative_frames.classify_frames --fold 0
+All 5 folds: sbatch scripts/train_classify.sh
 """
 
 import argparse
@@ -67,35 +63,30 @@ class FrameDataset(Dataset):
         return len(self.samples)
 
 
-def config_years(config):
-    return ["2025", "2020"] if config == "both" else [config]
+def split_csv(split_dir):
+    return Path(split_dir) / "split_info_5fold_paxos2025_from_cropping.csv"
 
 
-def cropped_dir(img_base, year, config):
-    return Path(img_base) / f"frames_cropped_paxos{year}_by_{config}"
+def cropped_dir(img_base):
+    return Path(img_base) / "frames_cropped"
 
 
-def split_csv(split_dir, year):
-    return Path(split_dir) / f"split_info_5fold_paxos{year}_from_cropping.csv"
-
-
-def build_samples(config, fold, split, img_base, split_dir):
-    """(path, label) pairs for one fold+split across all datasets of the config."""
+def build_samples(fold, split, img_base, split_dir):
+    """(path, label) pairs for one fold+split."""
+    df = pd.read_csv(split_csv(split_dir))
+    df = df[(df["fold"] == fold) & (df["split"] == split)]
+    folder = cropped_dir(img_base)
     samples = []
-    for year in config_years(config):
-        df = pd.read_csv(split_csv(split_dir, year))
-        df = df[(df["fold"] == fold) & (df["split"] == split)]
-        folder = cropped_dir(img_base, year, config)
-        n_missing = 0
-        for row in df.itertuples():
-            path = folder / str(int(row.label)) / row.filename
-            if path.exists():
-                samples.append((path, int(row.label)))
-            else:
-                n_missing += 1
-        print(f"  config={config} fold={fold} {split} paxos{year}: {len(df)} rows in "
-              f"{split_csv(split_dir, year).name}, {len(df) - n_missing} found in {folder}"
-              + (f", {n_missing} missing" if n_missing else ""))
+    n_missing = 0
+    for row in df.itertuples():
+        path = folder / str(int(row.label)) / row.filename
+        if path.exists():
+            samples.append((path, int(row.label)))
+        else:
+            n_missing += 1
+    print(f"  fold={fold} {split}: {len(df)} rows in {split_csv(split_dir).name}, "
+          f"{len(df) - n_missing} found in {folder}"
+          + (f", {n_missing} missing" if n_missing else ""))
     return samples
 
 
@@ -133,14 +124,12 @@ def save_confusion_matrix(y_true, y_pred, epoch, run_name, models_dir):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", choices=["2020", "2025", "both"], required=True,
-                        help="Classifier variant: which datasets the cropped training frames come from.")
     parser.add_argument("--fold", type=int, required=True, help="Fold index 0..4 (its val part is held out).")
     parser.add_argument("--img_base", type=str, default="data/informative_frames",
-                        help="Base of the cropped folders frames_cropped_paxos<ds>_by_<config>.")
+                        help="Base of the cropped frame folder frames_cropped.")
     parser.add_argument("--split_dir", type=str, default="informative_frames",
-                        help="Dir with split_info_5fold_paxos<ds>_from_cropping.csv.")
-    parser.add_argument("--models_dir", type=str, default="informative_frames/models_xdomain")
+                        help="Dir with split_info_5fold_paxos2025_from_cropping.csv.")
+    parser.add_argument("--models_dir", type=str, default="informative_frames/models")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--patience", type=int, default=3,
                         help="Early stopping: stop after this many epochs without val PR-AUC improvement.")
@@ -152,13 +141,13 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    run_name = f"Selection_B4_{args.config}_fold{args.fold}_{timestamp}"
+    run_name = f"Selection_B4_fold{args.fold}_{timestamp}"
     os.makedirs(args.models_dir, exist_ok=True)
     writer = SummaryWriter(log_dir=os.path.join("runs", run_name))
     print(f"--- {run_name} on {device} ---")
 
-    train_samples = build_samples(args.config, args.fold, "train", args.img_base, args.split_dir)
-    val_samples = build_samples(args.config, args.fold, "val", args.img_base, args.split_dir)
+    train_samples = build_samples(args.fold, "train", args.img_base, args.split_dir)
+    val_samples = build_samples(args.fold, "val", args.img_base, args.split_dir)
     assert train_samples and val_samples, "empty train or val split -- check --img_base/--split_dir"
 
     train_labels = np.array([y for _, y in train_samples])
@@ -183,8 +172,8 @@ def main():
     best_pr_auc = 0.0
     best_epoch = -1
     log = []
-    model_save_path = os.path.join(args.models_dir, f"cls_{args.config}_fold_{args.fold}.pth")
-    log_path = os.path.join(args.models_dir, f"cls_{args.config}_fold_{args.fold}_log.json")
+    model_save_path = os.path.join(args.models_dir, f"cls_fold_{args.fold}.pth")
+    log_path = os.path.join(args.models_dir, f"cls_fold_{args.fold}_log.json")
 
     for epoch in range(args.epochs):
         model.train()
@@ -248,10 +237,10 @@ def main():
 
     writer.close()
     with open(log_path, "w") as f:
-        json.dump({"config": args.config, "fold": args.fold, "epochs": args.epochs,
+        json.dump({"fold": args.fold, "epochs": args.epochs,
                    "epochs_run": len(log), "patience": args.patience,
                    "best_epoch": best_epoch, "best_val_pr_auc": best_pr_auc, "history": log}, f, indent=2)
-    print(f"Finished config={args.config} fold={args.fold} after {len(log)}/{args.epochs} epochs. "
+    print(f"Finished fold={args.fold} after {len(log)}/{args.epochs} epochs. "
           f"Best val PR-AUC: {best_pr_auc:.4f} (epoch {best_epoch + 1}) -> {model_save_path}")
 
 
