@@ -13,7 +13,6 @@ convnext/models/
 # Cropping
 cropping/frames_to_annotate_larger/
 cropping/models/
-cropping/models_xdomain/
 
 # Data
 data/2024_Paxos_Frames
