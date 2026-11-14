@@ -19,7 +19,7 @@ cropping/models_xdomain/
 data/2024_Paxos_Frames
 data/attention_errors_cnx/
 data/dr_videos
-data/ensemble_results_*/
+data/ensemble_results_*
 data/informative_frames
 data/matched_frames/
 data/multi_eval_paxos2025_binary/
