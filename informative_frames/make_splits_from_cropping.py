@@ -1,29 +1,25 @@
-"""Build the per-dataset 5-fold split files for the informative-frame annotations from the cropping splits.
+"""Build the 5-fold split file for the Paxos2025 informative-frame annotations from the cropping splits.
 
-The frames sampled for the informative-frame annotation (frames_raw_extract = Paxos2025,
-frames_raw_extract_paxos2020 = Paxos2020) were chosen from the same videos that were
-annotated for cropping, so the video-level folds of cropping/splits_<year>.json (subject-grouped,
-made by cropping/make_splits_simple.py) can be reused unchanged: a frame's fold is the fold in
-which its video sits in the *val* split of the cropping split; in that fold the frame is 'val',
-in the other four folds 'train'. This gives exactly the train/val semantics used by
-cropping/evaluate_segmentation.py, so the same evaluation logic applies to the informative-frame
-classifier: same-dataset -> fold-i model on the fold-i val rows (the part it never saw in
-training); other dataset -> ensemble of all 5 fold models on all rows of that dataset.
+The frames sampled for the informative-frame annotation (data/informative_frames/frames_raw_extract)
+were chosen from the same Paxos2025 videos that were annotated for cropping, so the video-level folds
+of cropping/splits.json (subject-grouped, made by cropping/make_splits_simple.py) can be reused
+unchanged: a frame's fold is the fold in which its video sits in the *val* split of the cropping
+split; in that fold the frame is 'val', in the other four folds 'train'. This gives exactly the
+train/val semantics used by cropping/evaluate_segmentation.py, so the same evaluation logic applies
+to the informative-frame classifier: fold-i model on the fold-i val rows (the part it never saw in
+training), and together the 5 val folds cover every labeled frame exactly once.
 
-One output CSV per dataset, same format as the split_info_5fold_<timestamp>.csv files written by
-informative_frames/classify_frames.py (one row per frame per fold):
+Output CSV (one row per frame per fold), same format as the split_info_5fold_<timestamp>.csv files
+written by informative_frames/classify_frames.py:
 
     filename,video_id,label,fold,split
 
-Inputs per dataset:
-    2025: cropping/splits_2025.json + a label CSV with columns filename,video_id,label
-          (default informative_frames/split_info_full.csv)
-    2020: cropping/splits_2020.json + a label CSV with columns filename,label
-          (default informative_frames/manual_labels_binary_paxos2020.csv;
-           video_id is derived from the filename by stripping the trailing _f<idx>)
+Inputs:
+    cropping/splits.json + a label CSV with columns filename,video_id,label
+    (default informative_frames/split_info_full.csv)
 
 Outputs in --out_dir:
-    split_info_5fold_paxos<year>_<suffix>.csv   (default suffix: from_cropping)
+    split_info_5fold_paxos2025_<suffix>.csv   (default suffix: from_cropping)
 
 Stdlib only (csv/json), so it runs on a fresh checkout without the ML stack.
 
@@ -88,13 +84,13 @@ def load_labels(label_csv):
     return out
 
 
-def build_split(year, cropping_dir, label_csv, n_splits):
-    stem_fold, all_stems = load_cropping_folds(Path(cropping_dir) / f"splits_{year}.json", n_splits)
+def build_split(cropping_splits, label_csv, n_splits):
+    stem_fold, all_stems = load_cropping_folds(cropping_splits, n_splits)
     labels = load_labels(label_csv)
 
     missing = sorted({r["video_id"] for r in labels if r["video_id"] not in all_stems})
     assert not missing, (
-        f"{label_csv}: {len(missing)} videos not present in cropping/splits_{year}.json, "
+        f"{label_csv}: {len(missing)} videos not present in {cropping_splits}, "
         f"e.g. {missing[:5]} -- the cropping split cannot be reused for these frames"
     )
 
@@ -122,11 +118,10 @@ def build_split(year, cropping_dir, label_csv, n_splits):
     return rows, val_per_fold
 
 
-def report(year, rows, val_per_fold, n_splits):
+def report(rows, val_per_fold, n_splits, cropping_splits):
     n_frames = len(rows) // n_splits
     n_videos = len({r["video_id"] for r in rows})
-    print(f"--- paxos{year}: {n_frames} frames, {n_videos} videos, folds taken from "
-          f"cropping/splits_{year}.json ---")
+    print(f"--- paxos2025: {n_frames} frames, {n_videos} videos, folds taken from {cropping_splits} ---")
     for f in range(n_splits):
         val = val_per_fold[f]
         dist = Counter(r["label"] for r in val)
@@ -137,48 +132,40 @@ def report(year, rows, val_per_fold, n_splits):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--cropping_dir", type=str, default="cropping")
+    parser.add_argument("--cropping_splits", type=str, default="cropping/splits.json")
     parser.add_argument("--out_dir", type=str, default="informative_frames")
     parser.add_argument("--suffix", type=str, default="from_cropping",
-                        help="Output files are split_info_5fold_paxos<year>_<suffix>.csv")
-    parser.add_argument("--labels_2025", type=str, default="informative_frames/split_info_full.csv",
+                        help="Output file is split_info_5fold_paxos2025_<suffix>.csv")
+    parser.add_argument("--labels", type=str, default="informative_frames/split_info_full.csv",
                         help="Paxos2025 label CSV (columns filename,video_id,label)")
-    parser.add_argument("--labels_2020", type=str, default="informative_frames/manual_labels_binary_paxos2020.csv",
-                        help="Paxos2020 label CSV (columns filename,label)")
-    parser.add_argument("--frames_dir_2025", type=str, default="data/informative_frames/frames_raw_extract",
+    parser.add_argument("--frames_dir", type=str, default="data/informative_frames/frames_raw_extract",
                         help="Raw Paxos2025 frame folder; used only to report unlabeled frames when it exists.")
-    parser.add_argument("--frames_dir_2020", type=str, default="data/informative_frames/frames_raw_extract_paxos2020",
-                        help="Raw Paxos2020 frame folder; used only to report unlabeled frames when it exists.")
     parser.add_argument("--n_splits", type=int, default=5)
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for year, label_csv, frames_dir in [
-        ("2025", args.labels_2025, args.frames_dir_2025),
-        ("2020", args.labels_2020, args.frames_dir_2020),
-    ]:
-        rows, val_per_fold = build_split(year, args.cropping_dir, label_csv, args.n_splits)
+    rows, val_per_fold = build_split(args.cropping_splits, args.labels, args.n_splits)
 
-        out_path = out_dir / f"split_info_5fold_paxos{year}_{args.suffix}.csv"
-        with open(out_path, "w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["filename", "video_id", "label", "fold", "split"])
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"  Saved {out_path} ({len(rows)} rows = {len(rows) // args.n_splits} frames x {args.n_splits} folds)")
-        report(year, rows, val_per_fold, args.n_splits)
+    out_path = out_dir / f"split_info_5fold_paxos2025_{args.suffix}.csv"
+    with open(out_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=["filename", "video_id", "label", "fold", "split"])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"  Saved {out_path} ({len(rows)} rows = {len(rows) // args.n_splits} frames x {args.n_splits} folds)")
+    report(rows, val_per_fold, args.n_splits, args.cropping_splits)
 
-        frames_path = Path(frames_dir)
-        if frames_path.is_dir():
-            on_disk = {p.name for p in frames_path.iterdir()
-                       if p.suffix.lower() in {".png", ".jpg", ".jpeg"}}
-            labeled = {r["filename"] for r in rows}
-            unlabeled = sorted(on_disk - labeled)
-            print(f"  frames in {frames_path}: {len(on_disk)}, labeled: {len(labeled & on_disk)}, "
-                  f"unlabeled (excluded, no label): {len(unlabeled)}")
-        else:
-            print(f"  frames dir {frames_path} not found -- skipped unlabeled-frame check")
+    frames_path = Path(args.frames_dir)
+    if frames_path.is_dir():
+        on_disk = {p.name for p in frames_path.iterdir()
+                   if p.suffix.lower() in {".png", ".jpg", ".jpeg"}}
+        labeled = {r["filename"] for r in rows}
+        unlabeled = sorted(on_disk - labeled)
+        print(f"  frames in {frames_path}: {len(on_disk)}, labeled: {len(labeled & on_disk)}, "
+              f"unlabeled (excluded, no label): {len(unlabeled)}")
+    else:
+        print(f"  frames dir {frames_path} not found -- skipped unlabeled-frame check")
 
 
 if __name__ == "__main__":
