@@ -11,7 +11,7 @@
 # data/informative_frames/frames_cropped/<label>/.
 #
 # Prerequisites (run from the repo root first):
-#   python -u -m informative_frames.make_splits_from_cropping
+#   python -u -m cropping.make_splits_from_q5v3
 #   trained checkpoints in cropping/models (seg_fold_<i>.pth)
 #   raw frames in data/informative_frames/frames_raw_extract
 #
@@ -22,6 +22,6 @@ conda activate job_new
 
 python -u -m informative_frames.crop_frames \
   --input_dir data/informative_frames/frames_raw_extract \
-  --split_csv informative_frames/split_info_5fold_paxos2025_from_cropping.csv \
+  --split_csv informative_frames/split_info_5fold_paxos2025_from_q5v3.csv \
   --model_dir cropping/models \
   --output_dir data/informative_frames/frames_cropped

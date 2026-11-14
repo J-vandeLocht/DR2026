@@ -9,12 +9,12 @@
 # Paxos2025 informative-frame classifier experiment: train the EfficientNet-B4
 # selection model over the 5 folds, on the frames cropped by scripts/crop_frames.sh
 # (data/informative_frames/frames_cropped), with the folds from
-# informative_frames/split_info_5fold_paxos2025_from_cropping.csv (built by
-# informative_frames.make_splits_from_cropping.py from the cropping splits).
+# informative_frames/split_info_5fold_paxos2025_from_q5v3.csv (built by
+# cropping.make_splits_from_q5v3.py from the q5_v3 patient-level splits).
 # Models are saved to $OUT_DIR/cls_fold_<fold>.pth.
 #
 # Prerequisites (run from the repo root first):
-#   python -u -m informative_frames.make_splits_from_cropping
+#   python -u -m cropping.make_splits_from_q5v3
 #   sbatch scripts/crop_frames.sh
 #
 # Usage: sbatch scripts/train_classify.sh

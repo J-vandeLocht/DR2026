@@ -1,6 +1,6 @@
 """Crop the raw Paxos2025 informative frames with the 5-fold cropping models.
 
-Every labeled frame (from the split CSV built by informative_frames/make_splits_from_cropping.py,
+Every labeled frame (from the split CSV built by cropping/make_splits_from_q5v3.py,
 rows with split == "val") is cropped and written to <output_dir>/<label>/<filename>
 (ImageFolder layout with classes 0/1, so classify_frames.py can consume the folder directly).
 
@@ -16,7 +16,7 @@ connected component is kept, and a square crop is taken around its bounding box 
 Run from the repo root:
     python -u -m informative_frames.crop_frames \
       --input_dir data/informative_frames/frames_raw_extract \
-      --split_csv informative_frames/split_info_5fold_paxos2025_from_cropping.csv \
+      --split_csv informative_frames/split_info_5fold_paxos2025_from_q5v3.csv \
       --model_dir cropping/models \
       --output_dir data/informative_frames/frames_cropped
 """
@@ -38,7 +38,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input_dir", type=str, default="data/informative_frames/frames_raw_extract",
                         help="Raw Paxos2025 frame folder.")
-    parser.add_argument("--split_csv", type=str, default="informative_frames/split_info_5fold_paxos2025_from_cropping.csv",
+    parser.add_argument("--split_csv", type=str, default="informative_frames/split_info_5fold_paxos2025_from_q5v3.csv",
                         help="Split CSV (filename,video_id,label,fold,split) with label + val fold per frame.")
     parser.add_argument("--model_dir", type=str, default="cropping/models",
                         help="Checkpoint dir with seg_fold_<i>.pth.")

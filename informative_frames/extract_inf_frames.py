@@ -1,7 +1,7 @@
 """Paxos2025 production pipeline: videos -> cleaned clips + per-frame prob txt + plot.
 
-Model choice per video: a video whose stem appears in the val split of fold i of
-cropping/splits.json is scored by the fold-i seg and cls models -- i.e. ONLY the models
+Model choice per video: a video whose id is in the val part of fold i of
+cropping/split_cropping_5fold_paxos2025_from_q5v3.csv is scored by the fold-i seg and cls models -- i.e. ONLY the models
 that were NOT trained on that video. A video unknown to the splits is scored by the
 full 5-fold ensembles, averaging sigmoid PROBABILITIES (not logits).
 
@@ -34,7 +34,15 @@ from tqdm import tqdm
 
 from misc.utils import apply_clahe_cv2
 from .crop_frames import crop_and_pad, get_largest_component_mask, pad_to_square_info
-from .make_splits_from_cropping import load_stem_folds
+
+
+def load_stem_folds(splits_csv):
+    """Map video id -> fold, from the rows with split == 'val' of the cropping split CSV."""
+    sp = pd.read_csv(splits_csv)
+    val = sp[sp["split"] == "val"]
+    stem_fold = dict(zip(val["video_id"], val["fold"].astype(int)))
+    assert len(stem_fold) == val["video_id"].nunique(), f"{splits_csv}: video in the val part of multiple folds"
+    return stem_fold
 
 
 def parse_args():
@@ -47,8 +55,8 @@ def parse_args():
                         help="Paxos2025 videos (raw or cleaned CLEAN_*.mp4).")
     parser.add_argument('--seg_model_dir', type=str, default='cropping/models')
     parser.add_argument('--cls_model_dir', type=str, default='informative_frames/models')
-    parser.add_argument('--splits_path', type=str, default='cropping/splits.json',
-                        help="Cropping splits used for the per-video val fold.")
+    parser.add_argument('--splits_csv', type=str, default='cropping/split_cropping_5fold_paxos2025_from_q5v3.csv',
+                        help="Cropping split CSV (filename,video_id,fold,split) used for the per-video val fold.")
     parser.add_argument('--out_base', type=str, default='data/ensemble_results_paxos2025')
     parser.add_argument('--min_informative_frames', type=int, default=32,
                         help="Guaranteed minimum length of the cleaned clip.")
@@ -95,8 +103,8 @@ def main():
     SEG_MODEL_DIR = Path(args.seg_model_dir)
     CLS_MODEL_DIR = Path(args.cls_model_dir)
 
-    stem_fold = load_stem_folds(args.splits_path, args.n_splits)
-    print(f"mapped {len(stem_fold)} videos to their val fold from {args.splits_path}")
+    stem_fold = load_stem_folds(args.splits_csv)
+    print(f"mapped {len(stem_fold)} videos to their val fold from {args.splits_csv}")
 
     OUT_BASE = Path(args.out_base)
     TXT_DIR = OUT_BASE / 'txt_files'

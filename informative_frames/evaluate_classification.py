@@ -2,7 +2,7 @@
 
 Mirrors cropping/evaluate_segmentation.py. Every trained classifier
 (<models_dir>/cls_fold_<i>.pth) is evaluated on the fold-i *val* rows of
-<split_dir>/split_info_5fold_paxos2025_from_cropping.csv, using the frames cropped by
+<split_dir>/split_info_5fold_paxos2025_from_q5v3.csv, using the frames cropped by
 informative_frames/crop_frames.py (<img_base>/frames_cropped/<label>/<filename>).
 Together the 5 val folds cover every labeled frame exactly once, so the per-image
 metrics are a clean out-of-sample estimate over the whole dataset.
