@@ -43,10 +43,29 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import StratifiedGroupKFold
 
-from cropping.make_splits_simple import frame_stem, subject_of
+FRAME_RE = re.compile(r"^(?P<stem>.*)_frame_(?P<idx>\d+)\.(?P<ext>png|jpe?g)$", re.IGNORECASE)
+IMG_RE = re.compile(r"IMG_(\d+)", re.IGNORECASE)
+EYE_RE = re.compile(r"^([A-Za-z]+\d+)[LR]\d*$")
 
 Q5_FRAME_RE = re.compile(r"^(?P<stem>.+?)_frame\d+(?:_score[\d.]+)?\.png$", re.IGNORECASE)
 INF_FRAME_RE = re.compile(r"^(?P<stem>.+?)_f\d+\.png$", re.IGNORECASE)
+
+
+def frame_stem(filename):
+    """Video stem of a cropping annotation filename (<video>_frame_<idx>.png)."""
+    m = FRAME_RE.match(filename)
+    return m.group("stem") if m else Path(filename).stem
+
+
+def subject_of(stem):
+    """Patient id of a video stem: R008R/R008R2/R008L -> R008, ..._IMG_4608 ... -> IMG_4608."""
+    m = IMG_RE.search(stem)
+    if m:
+        return f"IMG_{m.group(1)}"
+    m = EYE_RE.match(stem)
+    if m:
+        return m.group(1).upper()
+    return stem
 
 
 def q5_video_stem(clip_id):

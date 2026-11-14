@@ -12,7 +12,7 @@
 # Prerequisite (run from the repo root first; builds the 5 subject-level folds from
 # cropping/annotations_cropping_2025.csv -- the annotated frames must exist in
 # cropping/frames_to_annotate_larger/):
-#   python -u -m cropping.make_splits_simple
+#   python -u -m cropping.make_splits_from_q5v3
 #
 # Usage: sbatch scripts/train_cropping.sh
 #        FOLDS="0" bash scripts/train_cropping.sh   (subset of folds)

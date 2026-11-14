@@ -13,6 +13,7 @@ convnext/models/
 # Cropping
 cropping/frames_to_annotate_larger/
 cropping/models/
+cropping/train_vis/
 
 # Data
 data/2024_Paxos_Frames
@@ -31,6 +32,7 @@ dino/logs/
 
 # Informative frames
 informative_frames/models/
+informative_frames/train_vis/
 
 # MIL
 mil/models/

@@ -16,6 +16,10 @@ import json
 import random
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
@@ -23,6 +27,40 @@ import segmentation_models_pytorch as smp
 from torch.utils.data import DataLoader
 
 from cropping.segmentation_pipeline import FundusDataset, get_transforms
+
+
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+def save_train_batch_plots(train_loader, out_dir, n_batches=10, max_images=8):
+    """Plot the first n_batches training batches exactly as the model sees them: after
+    the augmentations and normalization (denormalized for display), with the fundus
+    mask contour overlaid. One PNG per batch: <out_dir>/batch_<nn>.png."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    saved = 0
+    for b, (imgs, masks) in enumerate(train_loader):
+        if b >= n_batches:
+            break
+        imgs = imgs[:max_images]
+        masks = masks[:max_images]
+        imgs = imgs * torch.tensor(IMAGENET_STD).view(1, 3, 1, 1) + torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1)
+        imgs = imgs.permute(0, 2, 3, 1).clamp(0, 1).numpy()
+        masks = masks[:, 0].numpy()
+        fig, axes = plt.subplots(1, len(imgs), figsize=(3 * len(imgs), 3.2))
+        if len(imgs) == 1:
+            axes = [axes]
+        for ax, img, mask in zip(axes, imgs, masks):
+            ax.imshow(img)
+            ax.contour(mask, levels=[0.5], colors="red", linewidths=1.2)
+            ax.axis("off")
+        fig.suptitle(f"Training batch {b} of fold 0 (as seen by the model, mask in red)")
+        fig.tight_layout()
+        fig.savefig(out_dir / f"batch_{b:02d}.png", dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        saved += 1
+    print(f"Saved {saved} training-batch plots to {out_dir}")
 
 
 def seed_everything(seed):
@@ -81,6 +119,10 @@ def main():
                               pin_memory=pin)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers,
                             pin_memory=pin)
+
+    if args.fold == 0:
+        save_train_batch_plots(train_loader, Path(args.out_dir).parent / "train_vis",
+                               n_batches=10, max_images=min(args.batch_size, 8))
 
     encoder_weights = None if args.encoder_weights.lower() == "none" else args.encoder_weights
     model = smp.UnetPlusPlus(
