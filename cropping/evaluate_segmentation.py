@@ -1,7 +1,8 @@
 """Evaluate the Paxos2025 cropping (segmentation) experiment.
 
 Every trained model (<models_dir>/seg_fold_<i>.pth) is evaluated on the fold-i *val*
-split of cropping/splits.json -- the part it never saw during training. Together the
+rows of cropping/split_cropping_5fold_paxos2025_from_q5v3.csv -- the part it never saw
+during training. Together the
 5 folds cover every annotated frame exactly once, so the per-image metrics are a
 clean out-of-sample estimate over the whole dataset.
 
@@ -39,10 +40,10 @@ METRICS = ["iou", "dice", "acc"]
 METRIC_TITLES = {"iou": "IoU (Jaccard)", "dice": "Dice", "acc": "Pixel accuracy"}
 
 
-def load_val_df(ann_csv, splits_path, fold):
+def load_val_df(ann_csv, splits_csv, fold):
     df = pd.read_csv(ann_csv)
-    with open(splits_path) as f:
-        val_files = json.load(f)[f"fold_{fold}"]["val"]
+    sp = pd.read_csv(splits_csv)
+    val_files = sp[(sp["fold"] == fold) & (sp["split"] == "val")]["filename"]
     return df[df["filename"].isin(val_files)]
 
 
@@ -90,7 +91,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--models_dir", type=str, default="cropping/models")
     parser.add_argument("--ann_csv", type=str, default="cropping/annotations_cropping_2025.csv")
-    parser.add_argument("--splits_path", type=str, default="cropping/splits.json")
+    parser.add_argument("--splits_csv", type=str, default="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv")
     parser.add_argument("--img_dir", type=str, default="cropping/frames_to_annotate_larger")
     parser.add_argument("--out_dir", type=str, default="cropping/eval")
     parser.add_argument("--img_size", type=int, default=768)
@@ -111,7 +112,7 @@ def main():
         if not model_path.exists():
             print(f"WARNING: missing model {model_path} -- fold {fold} skipped")
             continue
-        df = load_val_df(args.ann_csv, args.splits_path, fold)
+        df = load_val_df(args.ann_csv, args.splits_csv, fold)
         ds = FundusDataset(df, args.img_dir, get_transforms(train=False, img_size=args.img_size))
         loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
         print(f"fold {fold} val: {len(df)} images")

@@ -2,7 +2,7 @@
 
 One run per fold: fold i trains on the rows with fold==i & split=="train" of the split
 CSV built by informative_frames/make_splits_from_cropping.py
-(split_info_5fold_paxos2025_from_cropping.csv, reused from the cropping splits) and
+(split_info_5fold_paxos2025_from_q5v3.csv, built by cropping/make_splits_from_q5v3.py) and
 validates on fold==i & split=="val", so the val frames of fold i were never seen during
 training. The training images are the frames cropped by informative_frames/crop_frames.py
 (<img_base>/frames_cropped/<label>/<filename>, each cropped by the fold model of its own
@@ -62,7 +62,7 @@ class FrameDataset(Dataset):
 
 
 def split_csv(split_dir):
-    return Path(split_dir) / "split_info_5fold_paxos2025_from_cropping.csv"
+    return Path(split_dir) / "split_info_5fold_paxos2025_from_q5v3.csv"
 
 
 def cropped_dir(img_base):
@@ -126,7 +126,7 @@ def main():
     parser.add_argument("--img_base", type=str, default="data/informative_frames",
                         help="Base of the cropped frame folder frames_cropped.")
     parser.add_argument("--split_dir", type=str, default="informative_frames",
-                        help="Dir with split_info_5fold_paxos2025_from_cropping.csv.")
+                        help="Dir with split_info_5fold_paxos2025_from_q5v3.csv.")
     parser.add_argument("--models_dir", type=str, default="informative_frames/models")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--lr", type=float, default=1e-4)

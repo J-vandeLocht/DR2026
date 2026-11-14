@@ -1,7 +1,8 @@
 """Train the fundus-cropping segmentation model (Unet++ / EfficientNet-B4) for Paxos2025.
 
-One run per fold: fold i trains on the train part of cropping/splits.json fold_i and
-validates on its val part (the videos of that fold are never seen during training).
+One run per fold: fold i trains on the rows fold==i & split=="train" of the split CSV
+(cropping/split_cropping_5fold_paxos2025_from_q5v3.csv) and validates on fold==i &
+split=="val", so the val frames of fold i were never seen during training.
 Saves the best-val-IoU model to <out_dir>/seg_fold_<fold>.pth and a per-epoch log to
 <out_dir>/seg_fold_<fold>_log.json.
 
@@ -31,12 +32,14 @@ def seed_everything(seed):
     torch.cuda.manual_seed_all(seed)
 
 
-def load_fold(ann_csv, splits_path, fold):
-    """Return (train_df, val_df) for the given fold of the Paxos2025 cropping splits."""
+def load_fold(ann_csv, splits_csv, fold):
+    """Return (train_df, val_df) for the given fold of the Paxos2025 cropping split CSV."""
     df = pd.read_csv(ann_csv)
-    with open(splits_path) as f:
-        s = json.load(f)[f"fold_{fold}"]
-    return df[df["filename"].isin(s["train"])], df[df["filename"].isin(s["val"])]
+    sp = pd.read_csv(splits_csv)
+    sp = sp[sp["fold"] == fold]
+    train_files = sp[sp["split"] == "train"]["filename"]
+    val_files = sp[sp["split"] == "val"]["filename"]
+    return df[df["filename"].isin(train_files)], df[df["filename"].isin(val_files)]
 
 
 def main():
@@ -52,7 +55,7 @@ def main():
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--img_dir", type=str, default="cropping/frames_to_annotate_larger")
     parser.add_argument("--ann_csv", type=str, default="cropping/annotations_cropping_2025.csv")
-    parser.add_argument("--splits_path", type=str, default="cropping/splits.json")
+    parser.add_argument("--splits_csv", type=str, default="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv")
     parser.add_argument("--out_dir", type=str, default="cropping/models")
     parser.add_argument("--encoder_name", type=str, default="efficientnet-b4")
     parser.add_argument("--encoder_weights", type=str, default="imagenet",
@@ -68,7 +71,7 @@ def main():
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    train_df, val_df = load_fold(args.ann_csv, args.splits_path, args.fold)
+    train_df, val_df = load_fold(args.ann_csv, args.splits_csv, args.fold)
     print(f"fold={args.fold}: {len(train_df)} train / {len(val_df)} val frames")
 
     train_ds = FundusDataset(train_df, args.img_dir, get_transforms(train=True, img_size=args.img_size))
