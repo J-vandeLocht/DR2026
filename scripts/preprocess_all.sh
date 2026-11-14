@@ -21,7 +21,7 @@
 set -e
 source ~/.bashrc
 conda activate job_new
-cd "$(dirname "$0")/.."
+cd "${SLURM_SUBMIT_DIR:-.}"
 
 EPOCHS_CROP=${EPOCHS_CROP:-20}
 EPOCHS_CLS=${EPOCHS_CLS:-15}
