@@ -1,9 +1,9 @@
 """Paxos2025 production pipeline: videos -> cleaned clips + per-frame prob txt + plot.
 
-Model choice per video: a video whose id is in the val part of fold i of
-cropping/split_cropping_5fold_paxos2025_from_q5v3.csv is scored by the fold-i seg and cls models -- i.e. ONLY the models
-that were NOT trained on that video. A video unknown to the splits is scored by the
-full 5-fold ensembles, averaging sigmoid PROBABILITIES (not logits).
+Only the videos of the q5_v3 split lists (data/stratified_splits_paxos2025_patient_q5_v3,
+280 videos) are processed; all other videos in --video_dir are skipped. A video in the
+val part of q5_v3 fold i is scored by the fold-i seg and cls models -- i.e. ONLY the
+models that were NOT trained on that video.
 
 Pre-processing (same as cropping/segment_frames.py and informative_frames/crop_frames.py):
 each 1080x1920 frame is padded to a square (pad_to_square_info), the segmentation model
@@ -32,17 +32,9 @@ import albumentations as albu
 from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
+from cropping.make_splits_from_q5v3 import load_q5_video_folds
 from misc.utils import apply_clahe_cv2
 from .crop_frames import crop_and_pad, get_largest_component_mask, pad_to_square_info
-
-
-def load_stem_folds(splits_csv):
-    """Map video id -> fold, from the rows with split == 'val' of the cropping split CSV."""
-    sp = pd.read_csv(splits_csv)
-    val = sp[sp["split"] == "val"]
-    stem_fold = dict(zip(val["video_id"], val["fold"].astype(int)))
-    assert len(stem_fold) == val["video_id"].nunique(), f"{splits_csv}: video in the val part of multiple folds"
-    return stem_fold
 
 
 def parse_args():
@@ -52,11 +44,11 @@ def parse_args():
     parser.add_argument('--limit', type=int, default=None, help="Max videos per worker.")
 
     parser.add_argument('--video_dir', type=str, default='data/dr_videos',
-                        help="Paxos2025 videos (raw or cleaned CLEAN_*.mp4).")
+                        help="Paxos2025 videos; only those in the q5_v3 split lists are processed.")
     parser.add_argument('--seg_model_dir', type=str, default='cropping/models')
     parser.add_argument('--cls_model_dir', type=str, default='informative_frames/models')
-    parser.add_argument('--splits_csv', type=str, default='cropping/split_cropping_5fold_paxos2025_from_q5v3.csv',
-                        help="Cropping split CSV (filename,video_id,fold,split) used for the per-video val fold.")
+    parser.add_argument('--q5_dir', type=str, default='data/stratified_splits_paxos2025_patient_q5_v3',
+                        help="q5_v3 split lists; their videos define which videos are processed and with which fold model.")
     parser.add_argument('--out_base', type=str, default='data/ensemble_results_paxos2025')
     parser.add_argument('--min_informative_frames', type=int, default=32,
                         help="Guaranteed minimum length of the cleaned clip.")
@@ -103,8 +95,8 @@ def main():
     SEG_MODEL_DIR = Path(args.seg_model_dir)
     CLS_MODEL_DIR = Path(args.cls_model_dir)
 
-    stem_fold = load_stem_folds(args.splits_csv)
-    print(f"mapped {len(stem_fold)} videos to their val fold from {args.splits_csv}")
+    stem_fold = load_q5_video_folds(args.q5_dir, args.n_splits)
+    print(f"q5_v3: {len(stem_fold)} videos mapped to their val fold from {args.q5_dir}")
 
     OUT_BASE = Path(args.out_base)
     TXT_DIR = OUT_BASE / 'txt_files'
@@ -155,9 +147,11 @@ def main():
     ])
 
     all_vids = sorted([p for p in VIDEO_DIR.glob("*") if p.is_file() and p.suffix.lower() in {".mp4", ".avi", ".mov"}])
+    all_vids = [v for v in all_vids if v.stem in stem_fold]
     my_vids = [v for i, v in enumerate(all_vids) if i % args.total_gpus == args.gpu_id]
     if args.limit: my_vids = my_vids[:args.limit]
-    print(f"Worker {args.gpu_id}: Processing {len(my_vids)} videos.")
+    print(f"Worker {args.gpu_id}: Processing {len(my_vids)} of {len(all_vids)} q5_v3 videos "
+          f"(skipped {len(all_vids) - len(my_vids)} for this worker).")
 
     for v_path in tqdm(my_vids, desc=f"Overall GPU {args.gpu_id}"):
         vid_id = v_path.stem
@@ -169,7 +163,7 @@ def main():
         cls_mode = f"fold {fold} (val fold, not in its training)" if fold is not None else f"{len(cls_ensemble)}-fold prob ensemble"
         print(f"{vid_id}: seg={seg_mode} | cls={cls_mode}")
 
-        out_vid_path = VID_DIR / f"CLEAN_{vid_id}.mp4"
+        out_vid_path = VID_DIR / f"{vid_id}.mp4"
         txt_path = TXT_DIR / f"{vid_id}.txt"
         plot_path = PLOT_DIR / f"{vid_id}.png"
 
