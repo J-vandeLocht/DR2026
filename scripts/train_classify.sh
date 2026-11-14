@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --partition=A100short
+#SBATCH --partition=A40short
 #SBATCH --time=08:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=8
 
 # Paxos2025 informative-frame classifier experiment: train the EfficientNet-B4
 # selection model over the 5 folds, on the frames cropped by scripts/crop_frames.sh

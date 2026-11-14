@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --partition=A100short
+#SBATCH --partition=A40short
 #SBATCH --time=08:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=8
 
 # Paxos2025 cropping experiment: train the Unet++ (B4) segmentation model over the
 # 5 subject-level folds of cropping/splits.json.
