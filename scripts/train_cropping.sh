@@ -21,10 +21,9 @@ source ~/.bashrc
 conda activate job_new
 
 FOLDS=${FOLDS:-"0 1 2 3 4"}
-EPOCHS=${EPOCHS:-40}
+EPOCHS=${EPOCHS:-20}
 IMG_DIR=${IMG_DIR:-cropping/frames_to_annotate_larger}
 OUT_DIR=${OUT_DIR:-cropping/models}
-PATIENCE=${PATIENCE:-3}   # early stopping: epochs without val IoU improvement before stopping
 BATCH_SIZE=${BATCH_SIZE:-8}     # raise (16/32) if the GPU has headroom; A100 + AMP fits easily
 NUM_WORKERS=${NUM_WORKERS:-16}
 IMG_SIZE=${IMG_SIZE:-768}
@@ -33,7 +32,6 @@ for fold in $FOLDS; do
   echo "=== train fold=$fold epochs=$EPOCHS ==="
   python -u -m cropping.train_segmentation \
     --fold "$fold" --epochs "$EPOCHS" \
-    --img_dir "$IMG_DIR" --out_dir "$OUT_DIR" --patience "$PATIENCE" \
     --batch_size "$BATCH_SIZE" --num_workers "$NUM_WORKERS" --img_size "$IMG_SIZE" --amp
 done
 

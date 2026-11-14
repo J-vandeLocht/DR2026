@@ -43,8 +43,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fold", type=int, default=0, help="Fold index 0..4 (its val part is held out).")
     parser.add_argument("--epochs", type=int, default=40)
-    parser.add_argument("--patience", type=int, default=3,
-                        help="Early stopping: stop after this many epochs without val IoU improvement.")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--amp", action="store_true",
                         help="Mixed precision (autocast + GradScaler); big speedup on A100 tensor cores.")
@@ -98,7 +96,6 @@ def main():
 
     best_iou = -1.0  # guarantees a checkpoint is saved even if val IoU stays 0
     best_epoch = -1
-    stopped_early = False
     log = []
     for epoch in range(args.epochs):
         model.train()
@@ -140,15 +137,9 @@ def main():
             torch.save(model.state_dict(), model_save_path)
             print(f"   -> New Best IoU! Saved {model_save_path}")
 
-        if epoch - best_epoch >= args.patience:
-            stopped_early = True
-            print(f"   -> Early stopping: no val IoU improvement for {args.patience} epochs "
-                  f"(best {best_iou:.4f} at epoch {best_epoch + 1})")
-            break
-
     with open(log_path, "w") as f:
         json.dump({"fold": args.fold, "epochs": args.epochs,
-                   "epochs_run": len(log), "stopped_early": stopped_early,
+                   "epochs_run": len(log),
                    "best_epoch": best_epoch, "best_val_iou": best_iou, "history": log}, f, indent=2)
     print(f"Finished fold={args.fold} after {len(log)}/{args.epochs} epochs. "
           f"Best Val IoU: {best_iou:.4f} (epoch {best_epoch + 1})")

@@ -8,9 +8,7 @@ training. The training images are the frames cropped by informative_frames/crop_
 (<img_base>/frames_cropped/<label>/<filename>, each cropped by the fold model of its own
 val fold).
 
-Training stops early after --patience epochs without val PR-AUC improvement
-(same early stopping as cropping/train_segmentation.py); the best-val-PR-AUC model is
-saved to <models_dir>/cls_fold_<fold>.pth (consumed by
+The best-val-PR-AUC model is saved to <models_dir>/cls_fold_<fold>.pth (consumed by
 informative_frames/evaluate_classification.py), confusion matrices to
 <models_dir>/Selection_B4_fold<fold>_<timestamp>_cm_epoch_<e>.png, a per-epoch
 log to <models_dir>/cls_fold_<fold>_log.json, and TensorBoard logs to runs/.
@@ -131,8 +129,6 @@ def main():
                         help="Dir with split_info_5fold_paxos2025_from_cropping.csv.")
     parser.add_argument("--models_dir", type=str, default="informative_frames/models")
     parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--patience", type=int, default=3,
-                        help="Early stopping: stop after this many epochs without val PR-AUC improvement.")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--num_workers", type=int, default=4)
@@ -230,15 +226,10 @@ def main():
             torch.save(model.state_dict(), model_save_path)
             save_confusion_matrix(y_true, y_pred, epoch, run_name, args.models_dir)
 
-        if epoch - best_epoch >= args.patience:
-            print(f"   -> Early stopping: no val PR-AUC improvement for {args.patience} epochs "
-                  f"(best {best_pr_auc:.4f} at epoch {best_epoch + 1})")
-            break
-
     writer.close()
     with open(log_path, "w") as f:
         json.dump({"fold": args.fold, "epochs": args.epochs,
-                   "epochs_run": len(log), "patience": args.patience,
+                   "epochs_run": len(log),
                    "best_epoch": best_epoch, "best_val_pr_auc": best_pr_auc, "history": log}, f, indent=2)
     print(f"Finished fold={args.fold} after {len(log)}/{args.epochs} epochs. "
           f"Best val PR-AUC: {best_pr_auc:.4f} (epoch {best_epoch + 1}) -> {model_save_path}")
