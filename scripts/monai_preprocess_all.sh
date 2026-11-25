@@ -18,9 +18,14 @@
 set -e
 source ~/.bashrc
 conda activate job_new
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT=""
+for d in "${SLURM_SUBMIT_DIR:-}" "${SLURM_SUBMIT_DIR:+${SLURM_SUBMIT_DIR}/..}" "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."; do
+  if [ -n "$d" ] && [ -d "$d/monai_preproc" ]; then REPO_ROOT="$(cd "$d" && pwd)"; break; fi
+done
+if [ -z "$REPO_ROOT" ]; then echo "ERROR: could not locate repo root (monai_preproc/) from SLURM_SUBMIT_DIR=${SLURM_SUBMIT_DIR:-unset} or script location" >&2; exit 1; fi
 cd "$REPO_ROOT"
 export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
+echo "REPO_ROOT=$REPO_ROOT"
 
 CONFIG=${CONFIG:-unet_medium_512}
 EPOCHS_CROP=${EPOCHS_CROP:-20}
