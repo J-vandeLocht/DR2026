@@ -50,7 +50,10 @@ sbatch scripts/monai_sweep.sh            # or: python -u -m monai_preproc.sweep 
 
 `DEFAULT_GRID` in `configs.py` spans a baseline (FlexibleUNet/EfficientNet-B4
 @ 768/512, matching the current smp pipeline's capacity) down to small UNet /
-EfficientNet-B0 @ 256–384. Each config is trained on all 5 folds and evaluated
+EfficientNet-B0 @ 256–384. All grid configs use ImageNet-pretrained backbones
+(`pretrained=True`), matching the old pipeline's `--encoder_weights imagenet`
+/ `EfficientNet_B4_Weights.DEFAULT`; checkpoints are always *loaded* with
+`pretrained=False` so no weights are downloaded at eval/extract time. Each config is trained on all 5 folds and evaluated
 on the val folds (never trained on), with per-frame latency/params/FLOPs
 recorded; `sweep.py` then reports the Pareto front in `pareto.csv`. Extend or
 override the grid with a JSON file: `python -m monai_preproc.sweep --grid my_grid.json`,

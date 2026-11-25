@@ -21,6 +21,7 @@ class PreprocConfig:
     name: str = "default"
     seg_arch: str = "unet"
     seg_backbone: str = "efficientnet-b0"
+    pretrained: bool = False
     seg_channels: tuple = (32, 64, 128, 256, 512)
     seg_strides: tuple = (2, 2, 2, 2, 2)
     seg_img_size: int = 512
@@ -55,28 +56,29 @@ DEFAULT_GRID = {
         name="baseline_flexunet_b4_768",
         seg_arch="flexunet", seg_backbone="efficientnet-b4", seg_img_size=768,
         cls_backbone="efficientnet-b4", cls_img_size=512, batch_size=4, cls_batch_size=16,
+        pretrained=True,
     ),
     "flexunet_b1_512": PreprocConfig(
         name="flexunet_b1_512",
         seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=512,
-        cls_backbone="efficientnet-b1", cls_img_size=384,
+        cls_backbone="efficientnet-b1", cls_img_size=384, pretrained=True,
     ),
     "unet_medium_512": PreprocConfig(
         name="unet_medium_512",
         seg_arch="unet", seg_channels=(32, 64, 128, 256, 512), seg_strides=(2, 2, 2, 2, 2),
-        seg_img_size=512, cls_backbone="efficientnet-b0", cls_img_size=384,
+        seg_img_size=512, cls_backbone="efficientnet-b0", cls_img_size=384, pretrained=True,
     ),
     "unet_small_384": PreprocConfig(
         name="unet_small_384",
         seg_arch="unet", seg_channels=(16, 32, 64, 128), seg_strides=(2, 2, 2, 2),
         seg_img_size=384, cls_backbone="efficientnet-b0", cls_img_size=320,
-        batch_size=8, cls_batch_size=32,
+        batch_size=8, cls_batch_size=32, pretrained=True,
     ),
     "unet_tiny_256": PreprocConfig(
         name="unet_tiny_256",
         seg_arch="unet", seg_channels=(8, 16, 32, 64), seg_strides=(2, 2, 2, 2),
         seg_img_size=256, cls_backbone="efficientnet-b0", cls_img_size=224,
-        batch_size=16, cls_batch_size=64,
+        batch_size=16, cls_batch_size=64, pretrained=True,
     ),
 }
 

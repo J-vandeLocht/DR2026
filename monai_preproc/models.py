@@ -20,19 +20,21 @@ from monai.networks.nets import UNet, FlexibleUNet, EfficientNetBN
 from .configs import PreprocConfig
 
 
-def build_seg_model(cfg: PreprocConfig) -> nn.Module:
+def build_seg_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
+    pre = cfg.pretrained if pretrained is None else pretrained
     if cfg.seg_arch == "unet":
         return UNet(spatial_dims=2, in_channels=3, out_channels=1,
                     channels=list(cfg.seg_channels), strides=list(cfg.seg_strides),
                     num_res_units=2)
     if cfg.seg_arch == "flexunet":
         return FlexibleUNet(in_channels=3, out_channels=1, backbone=cfg.seg_backbone,
-                            pretrained=False, spatial_dims=2)
+                            pretrained=pre, spatial_dims=2)
     raise ValueError(f"unknown seg_arch '{cfg.seg_arch}' (choose 'unet' or 'flexunet')")
 
 
-def build_cls_model(cfg: PreprocConfig) -> nn.Module:
-    return EfficientNetBN(model_name=cfg.cls_backbone, pretrained=False,
+def build_cls_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
+    pre = cfg.pretrained if pretrained is None else pretrained
+    return EfficientNetBN(model_name=cfg.cls_backbone, pretrained=pre,
                           spatial_dims=2, in_channels=3, num_classes=1)
 
 
@@ -55,14 +57,14 @@ def load_config_for(path, cfg=None):
 
 def load_seg_model(path, device, cfg=None) -> nn.Module:
     cfg = load_config_for(path, cfg)
-    model = build_seg_model(cfg)
+    model = build_seg_model(cfg, pretrained=False)
     model.load_state_dict(torch.load(path, map_location=device))
     return model.to(device).eval()
 
 
 def load_cls_model(path, device, cfg=None) -> nn.Module:
     cfg = load_config_for(path, cfg)
-    model = build_cls_model(cfg)
+    model = build_cls_model(cfg, pretrained=False)
     model.load_state_dict(torch.load(path, map_location=device))
     return model.to(device).eval()
 
