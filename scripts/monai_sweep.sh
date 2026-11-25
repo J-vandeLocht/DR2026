@@ -18,7 +18,9 @@
 set -e
 source ~/.bashrc
 conda activate job_new
-cd "${SLURM_SUBMIT_DIR:-.}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 OUT_DIR=${OUT_DIR:-results/monai_sweep}
 GRID_JSON=${GRID_JSON:-}

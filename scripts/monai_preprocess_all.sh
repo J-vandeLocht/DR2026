@@ -18,7 +18,9 @@
 set -e
 source ~/.bashrc
 conda activate job_new
-cd "${SLURM_SUBMIT_DIR:-.}"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+export PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}"
 
 CONFIG=${CONFIG:-unet_medium_512}
 EPOCHS_CROP=${EPOCHS_CROP:-20}
