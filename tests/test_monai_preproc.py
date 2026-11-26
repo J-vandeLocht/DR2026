@@ -309,7 +309,7 @@ def test_grid_unet_strides_match_channels():
 def test_sweep_seg_only_writes_csv_pareto_and_overview_plot(tmp_path):
     from monai_preproc.sweep import run_sweep
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = load_grid(tiny_grid_file(tmp_path))
+    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
     out_dir = tmp_path / "sweep"
     df = run_sweep(grid, str(out_dir), folds=[0], epochs_seg=1, epochs_cls=1, train=True,
                    ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
@@ -361,7 +361,7 @@ def test_ellipse_moments_recover_ellipse_and_shape_loss_gradients():
 def test_sweep_shape_loss_adds_seg_only_variants(tmp_path):
     from monai_preproc.sweep import run_sweep
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = load_grid(tiny_grid_file(tmp_path))
+    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
     out_dir = tmp_path / "sweep"
     df = run_sweep(grid, str(out_dir), folds=[0], epochs_seg=1, epochs_cls=1, train=True,
                    ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
