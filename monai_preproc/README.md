@@ -24,7 +24,7 @@ pipelines cannot drift apart.
 | `train.py` | `python -m monai_preproc.train seg|cls --config NAME --fold i` (best val IoU / PR-AUC, `seg_fold_<i>.pth` / `cls_fold_<i>.pth` + `.json` sidecar + `_log.json`) |
 | `evaluate.py` | `python -m monai_preproc.evaluate seg|cls ...` — same output CSVs/plot as `cropping/evaluate_segmentation.py` / `informative_frames/evaluate_classification.py`, plus cost columns in `summary.csv` |
 | `extract.py` | `python -m monai_preproc.extract ...` — videos → `CLEAN_<video>.mp4` + txt + plot; q5_v3 videos missing/unreadable locally are skipped with a warning; `--out_base data/ensemble_results_paxos2025` is rejected like in the existing extractor |
-| `sweep.py` | `python -m monai_preproc.sweep --out_dir results/monai_sweep` — trains+evaluates every config, writes `sweep_results.csv` and `pareto.csv` (best cost/performance trade-off) |
+| `sweep.py` | `python -m monai_preproc.sweep --out_dir results/monai_sweep [--preset flexunet] [--stage seg|cls|both]` — trains+evaluates the selected stage(s) of every config in the grid, writes `sweep_results.csv`, `pareto.csv` and the overview plot `overview.png` |
 
 Shell entry points (additive): `scripts/monai_preprocess_all.sh` (full pipeline,
 `CONFIG=` selects the grid entry) and `scripts/monai_sweep.sh` (sweep).
@@ -42,22 +42,45 @@ python -u -m monai_preproc.extract --video_dir data/dr_videos \
   --seg_model_dir monai_preproc/models/seg --cls_model_dir monai_preproc/models/cls \
   --config unet_small_384 --out_base data/ensemble_results_paxos2025_monai
 
-# cost/performance sweep over all grid configs
+# cost/performance sweep over the FlexibleUNet architecture grid
 sbatch scripts/monai_sweep.sh            # or: python -u -m monai_preproc.sweep --out_dir results/monai_sweep
 ```
 
 ## Cost/performance sweep
 
-`DEFAULT_GRID` in `configs.py` spans a baseline (FlexibleUNet/EfficientNet-B4
-@ 768/512, matching the current smp pipeline's capacity) down to small UNet /
-EfficientNet-B0 @ 256–384. All grid configs use ImageNet-pretrained backbones
-(`pretrained=True`), matching the old pipeline's `--encoder_weights imagenet`
-/ `EfficientNet_B4_Weights.DEFAULT`; checkpoints are always *loaded* with
-`pretrained=False` so no weights are downloaded at eval/extract time. Each config is trained on all 5 folds and evaluated
-on the val folds (never trained on), with per-frame latency/params/FLOPs
-recorded; `sweep.py` then reports the Pareto front in `pareto.csv`. Extend or
-override the grid with a JSON file: `python -m monai_preproc.sweep --grid my_grid.json`,
-where the file is `{"my_config": {"seg_img_size": 384, "cls_backbone": "efficientnet-b0", ...}}`.
+Two named grids live in `configs.py` (`GRIDS`): `default` (`DEFAULT_GRID`, the
+original mixed UNet-vs-FlexibleUNet comparison) and `flexunet`
+(`FLEXUNET_GRID`, the default of `monai_preproc.sweep` / `scripts/monai_sweep.sh`:
+FlexibleUNet with EfficientNet-B0…B4 backbones at 256–768 input, the only
+backbones with ImageNet weights in 2D — the sweep showed plain UNet encoders
+cannot match them on the fundus crop mask). All grid configs use
+ImageNet-pretrained backbones (`pretrained=True`), matching the old pipeline's
+`--encoder_weights imagenet` / `EfficientNet_B4_Weights.DEFAULT`; checkpoints
+are always *loaded* with `pretrained=False` so no weights are downloaded at
+eval/extract time. Each config is trained on all 5 folds and evaluated on the
+val folds (never trained on), with per-frame latency/params/FLOPs recorded.
+
+The two pipeline stages are searched separately: run `--stage seg` first to
+pick the segmentation architecture, then `--stage cls` for the
+informative-frame classifier (`STAGE=seg sbatch scripts/monai_sweep.sh`,
+`--no-train` re-evaluates existing checkpoints). Outputs in `--out_dir`
+(default `results/monai_sweep`):
+
+- `sweep_results.csv` — one row per config+stage (`perf` = mean micro IoU for
+  seg, mean PR-AUC for cls; cost = `latency_ms` per frame, `params`, `flops`)
+- `pareto.csv` — Pareto-optimal configs per stage
+- `overview.png` — performance-vs-cost plot per stage with the Pareto front
+  highlighted (re-render from an existing CSV without training:
+  `python -u -m monai_preproc.sweep --plot_only results/monai_sweep/sweep_results.csv`)
+- `models/<config>/{seg,cls}/`, `eval/<config>/{seg,cls}/` — checkpoints and
+  per-fold eval detail (same CSV/plot format as `cropping/eval/` and
+  `informative_frames/eval/`)
+
+Extend or override a grid with a JSON file:
+`python -m monai_preproc.sweep --grid my_grid.json`, where the file is
+`{"my_config": {"seg_img_size": 384, "cls_backbone": "efficientnet-b0", ...}}`;
+`train.py` / `evaluate.py` / `extract.py` take the same `--preset`/`--grid`
+flags to address configs by name.
 
 ## Robustness notes
 

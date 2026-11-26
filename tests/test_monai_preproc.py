@@ -16,7 +16,7 @@ import pytest
 import torch
 from PIL import Image
 
-from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, load_grid
+from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, FLEXUNET_GRID, load_grid
 from monai_preproc.transforms import seg_val_transforms, clahe_np
 from monai_preproc.models import (build_seg_model, build_cls_model, save_checkpoint,
                                   load_seg_model, load_cls_model, measure_cost)
@@ -55,6 +55,10 @@ def test_grid_loads(tmp_path):
     grid2 = load_grid(str(override))
     assert grid2["custom"].seg_img_size == 256
     assert "unet_tiny_256" in grid2
+    flex = load_grid(None, preset="flexunet")
+    assert set(flex) == set(FLEXUNET_GRID)
+    assert all(c.seg_arch == "flexunet" for c in flex.values())
+    assert all(c.pretrained for c in flex.values())
 
 
 def test_seg_val_transform_parity_with_albumentations():
@@ -299,3 +303,38 @@ def test_grid_unet_strides_match_channels():
     for cfg in DEFAULT_GRID.values():
         if cfg.seg_arch == "unet":
             assert len(cfg.seg_strides) == len(cfg.seg_channels) - 1
+
+
+def test_sweep_seg_only_writes_csv_pareto_and_overview_plot(tmp_path):
+    from monai_preproc.sweep import run_sweep
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    grid = load_grid(tiny_grid_file(tmp_path))
+    out_dir = tmp_path / "sweep"
+    df = run_sweep(grid, str(out_dir), folds=[0], epochs_seg=1, epochs_cls=1, train=True,
+                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
+                   num_workers=0, device=torch.device("cpu"), stages=("seg",),
+                   log=lambda *a: None)
+    assert set(df["stage"]) == {"seg"}
+    assert (out_dir / "sweep_results.csv").exists()
+    assert (out_dir / "pareto.csv").exists()
+    assert (out_dir / "overview.png").exists()
+    assert (out_dir / "models" / "tiny" / "seg" / "seg_fold_0.pth").exists()
+    assert not (out_dir / "models" / "tiny" / "cls").exists()
+
+
+def test_sweep_plot_only_rerenders_outputs(tmp_path):
+    from monai_preproc.sweep import main as sweep_main
+    df = pd.DataFrame([
+        {"config": "a", "stage": "seg", "perf": 0.9, "params": 100, "flops": None, "latency_ms": 20.0, "img_size": 64, "arch": "unet"},
+        {"config": "a", "stage": "cls", "perf": 0.95, "params": 50, "flops": None, "latency_ms": 10.0, "img_size": 64, "arch": "efficientnet-b0"},
+        {"config": "b", "stage": "seg", "perf": 0.8, "params": 10, "flops": None, "latency_ms": 2.0, "img_size": 64, "arch": "unet"},
+        {"config": "b", "stage": "cls", "perf": 0.96, "params": 5, "flops": None, "latency_ms": 1.0, "img_size": 64, "arch": "efficientnet-b0"},
+    ])
+    csv = tmp_path / "sweep_results.csv"
+    df.to_csv(csv, index=False)
+    out = tmp_path / "out"
+    res = sweep_main(["--plot_only", str(csv), "--out_dir", str(out)])
+    assert len(res) == 4
+    assert (out / "pareto.csv").exists() and (out / "overview.png").exists()
+    pareto = pd.read_csv(out / "pareto.csv")
+    assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}

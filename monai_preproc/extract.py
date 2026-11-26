@@ -36,7 +36,7 @@ from tqdm import tqdm
 
 from informative_frames.crop_frames import crop_and_pad, get_largest_component_mask, pad_to_square_info
 from informative_frames.extract_inf_frames import select_informative_frames
-from .configs import load_grid
+from .configs import GRIDS, load_grid
 from .models import find_fold_checkpoint, load_seg_model, load_cls_model
 from .transforms import seg_infer_transforms, cls_infer_transforms
 
@@ -60,6 +60,7 @@ def parse_args(argv=None):
     parser.add_argument("--cls_split_csv", type=str, default="informative_frames/split_info_5fold_paxos2025_from_q5v3.csv")
     parser.add_argument("--out_base", type=str, default="data/ensemble_results_paxos2025_monai")
     parser.add_argument("--config", type=str, default=None, help="Grid name; default: first grid entry.")
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="default", help="Named grid to take --config from.")
     parser.add_argument("--grid", type=str, default=None)
     parser.add_argument("--n_splits", type=int, default=5)
     parser.add_argument("--min_informative_frames", type=int, default=32)
@@ -211,7 +212,7 @@ def main(argv=None):
     if Path(args.out_base).resolve() == PROTECTED_OUT_BASE.resolve():
         raise SystemExit(f"--out_base {args.out_base} is the in-use clip dir; write to a new dir instead.")
     device = torch.device(f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu")
-    grid = load_grid(args.grid)
+    grid = load_grid(args.grid, preset=args.preset)
     cfg = grid[args.config] if args.config else next(iter(grid.values()))
 
     q5_stems = load_q5_videos(args.q5_dir, args.n_splits)

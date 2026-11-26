@@ -27,7 +27,7 @@ import torch
 from torch.utils.data import DataLoader
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
-from .configs import PreprocConfig, load_grid
+from .configs import PreprocConfig, GRIDS, load_grid
 from .data import MonaiFundusDataset, MonaiFrameDataset, load_seg_fold, load_cls_samples
 from .models import load_seg_model, load_cls_model, find_fold_checkpoint, measure_cost
 from .train import binary_counts
@@ -181,6 +181,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=["seg", "cls"])
     parser.add_argument("--config", type=str, required=True)
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="default", help="Named grid to take --config from.")
     parser.add_argument("--grid", type=str, default=None)
     parser.add_argument("--models_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)
@@ -194,7 +195,7 @@ def main(argv=None):
     parser.add_argument("--split_dir", type=str, default="informative_frames")
     args = parser.parse_args(argv)
 
-    cfg = load_grid(args.grid)[args.config]
+    cfg = load_grid(args.grid, preset=args.preset)[args.config]
     if args.stage == "seg":
         return evaluate_seg(cfg, args.models_dir, args.ann_csv, args.splits_csv, args.img_dir,
                             args.out_dir, n_splits=args.n_splits, batch_size=args.batch_size,

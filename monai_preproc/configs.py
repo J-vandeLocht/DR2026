@@ -6,9 +6,13 @@ A PreprocConfig fully determines the two pre-processing stages:
         "flexunet": MONAI FlexibleUNet with a timm/EfficientNet encoder backbone)
   cls: informative-frame classifier (MONAI EfficientNetBN) + input size
 
-DEFAULT_GRID is the experiment grid used by monai_preproc.sweep to find the
-best cost/performance balance. load_grid optionally extends/overrides it from
-a JSON file ({name: {field: value, ...}}).
+DEFAULT_GRID is the original mixed grid (UNet vs FlexibleUNet comparison).
+FLEXUNET_GRID is the FlexibleUNet-only architecture search used by
+monai_preproc.sweep by default (--preset flexunet): EfficientNet-B0..B4
+backbones at 256..768 input, since the sweep showed plain UNet encoders
+cannot match the pretrained FlexibleUNet encoder on the fundus crop mask.
+load_grid selects a named grid (GRIDS[preset]) and optionally
+extends/overrides it from a JSON file ({name: {field: value, ...}}).
 """
 
 import json
@@ -83,9 +87,50 @@ DEFAULT_GRID = {
 }
 
 
-def load_grid(path=None):
-    """DEFAULT_GRID, optionally overridden/extended by a JSON file of {name: {...}}."""
-    grid = {k: PreprocConfig(**v.to_dict()) for k, v in DEFAULT_GRID.items()}
+FLEXUNET_GRID = {
+    "flexunet_b0_256": PreprocConfig(
+        name="flexunet_b0_256",
+        seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=256,
+        cls_backbone="efficientnet-b0", cls_img_size=224,
+        batch_size=16, cls_batch_size=64, pretrained=True,
+    ),
+    "flexunet_b0_384": PreprocConfig(
+        name="flexunet_b0_384",
+        seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=384,
+        cls_backbone="efficientnet-b0", cls_img_size=320,
+        batch_size=8, cls_batch_size=32, pretrained=True,
+    ),
+    "flexunet_b1_384": PreprocConfig(
+        name="flexunet_b1_384",
+        seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=384,
+        cls_backbone="efficientnet-b0", cls_img_size=320,
+        batch_size=8, cls_batch_size=32, pretrained=True,
+    ),
+    "flexunet_b1_512": PreprocConfig(
+        name="flexunet_b1_512",
+        seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=512,
+        cls_backbone="efficientnet-b1", cls_img_size=384, pretrained=True,
+    ),
+    "flexunet_b2_512": PreprocConfig(
+        name="flexunet_b2_512",
+        seg_arch="flexunet", seg_backbone="efficientnet-b2", seg_img_size=512,
+        cls_backbone="efficientnet-b0", cls_img_size=384, pretrained=True,
+    ),
+    "flexunet_b4_768": PreprocConfig(
+        name="flexunet_b4_768",
+        seg_arch="flexunet", seg_backbone="efficientnet-b4", seg_img_size=768,
+        cls_backbone="efficientnet-b0", cls_img_size=512, batch_size=4, cls_batch_size=16,
+        pretrained=True,
+    ),
+}
+
+GRIDS = {"default": DEFAULT_GRID, "flexunet": FLEXUNET_GRID}
+
+
+def load_grid(path=None, preset="default"):
+    """GRIDS[preset] (default: DEFAULT_GRID), optionally overridden/extended
+    by a JSON file of {name: {...}}."""
+    grid = {k: PreprocConfig(**v.to_dict()) for k, v in GRIDS[preset].items()}
     if path:
         extra = json.loads(Path(path).read_text())
         for name, fields in extra.items():

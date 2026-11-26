@@ -9,6 +9,6 @@ Nothing in the existing cropping/, informative_frames/, data/ or scripts/
 packages is modified by this package.
 """
 
-from .configs import PreprocConfig, DEFAULT_GRID, load_grid
+from .configs import PreprocConfig, DEFAULT_GRID, FLEXUNET_GRID, GRIDS, load_grid
 
-__all__ = ["PreprocConfig", "DEFAULT_GRID", "load_grid"]
+__all__ = ["PreprocConfig", "DEFAULT_GRID", "FLEXUNET_GRID", "GRIDS", "load_grid"]

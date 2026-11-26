@@ -24,7 +24,7 @@ from torch.utils.data import DataLoader, WeightedRandomSampler
 from monai.losses import DiceCELoss
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
-from .configs import PreprocConfig, DEFAULT_GRID, load_grid
+from .configs import PreprocConfig, DEFAULT_GRID, GRIDS, load_grid
 from .data import MonaiFundusDataset, MonaiFrameDataset, load_seg_fold, load_cls_samples
 from .models import build_seg_model, build_cls_model, save_checkpoint
 from .transforms import seg_train_transforms, seg_val_transforms, cls_train_transforms, cls_val_transforms
@@ -181,6 +181,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("stage", choices=["seg", "cls"])
     parser.add_argument("--config", type=str, default=None, help="Name from the grid (default: first grid entry).")
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="default", help="Named grid to take --config from.")
     parser.add_argument("--grid", type=str, default=None, help="Optional JSON file overriding/extending the grid.")
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=None)
@@ -197,7 +198,7 @@ def main(argv=None):
                         help="default monai_preproc/models/seg or .../cls")
     args = parser.parse_args(argv)
 
-    grid = load_grid(args.grid)
+    grid = load_grid(args.grid, preset=args.preset)
     cfg = grid[args.config] if args.config else next(iter(grid.values()))
     out_dir = args.out_dir or f"monai_preproc/models/{args.stage}"
     if args.stage == "seg":
