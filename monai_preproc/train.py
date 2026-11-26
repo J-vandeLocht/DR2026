@@ -26,6 +26,7 @@ from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
 from .configs import PreprocConfig, DEFAULT_GRID, GRIDS, load_grid
 from .data import MonaiFundusDataset, MonaiFrameDataset, load_seg_fold, load_cls_samples
+from .losses import ellipse_shape_loss
 from .models import build_seg_model, build_cls_model, save_checkpoint
 from .transforms import seg_train_transforms, seg_val_transforms, cls_train_transforms, cls_val_transforms
 
@@ -82,7 +83,10 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
             imgs = batch["image"].to(device)
             masks = batch["mask"].to(device)
             optimizer.zero_grad()
-            loss = loss_fn(model(imgs), masks)
+            logits = model(imgs)
+            loss = loss_fn(logits, masks)
+            if cfg.seg_shape_loss_weight > 0:
+                loss = loss + cfg.seg_shape_loss_weight * ellipse_shape_loss(logits, masks)
             loss.backward()
             optimizer.step()
             losses.append(loss.item())

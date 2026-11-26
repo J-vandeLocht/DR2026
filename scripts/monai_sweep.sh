@@ -15,6 +15,8 @@
 # Usage: sbatch scripts/monai_sweep.sh                        # flexunet grid, both stages
 #        STAGE=seg sbatch scripts/monai_sweep.sh              # segmentation search only
 #        STAGE=cls sbatch scripts/monai_sweep.sh              # classifier search only
+#        STAGE=seg SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh  # also run each config with the
+#                                                             # ellipse shape-prior loss ('<name>_shape100')
 #        ONLY="flexunet_b0_384,flexunet_b1_512" STAGE=seg EPOCHS_SEG=10 sbatch scripts/monai_sweep.sh
 #        NO_TRAIN=1 sbatch scripts/monai_sweep.sh             # re-evaluate existing checkpoints only
 #        PRESET=default sbatch scripts/monai_sweep.sh         # original mixed UNet/FlexibleUNet grid
@@ -30,6 +32,7 @@ export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 OUT_DIR=${OUT_DIR:-results/monai_sweep}
 PRESET=${PRESET:-flexunet}
 STAGE=${STAGE:-both}
+SHAPE_LOSS=${SHAPE_LOSS:-}
 GRID_JSON=${GRID_JSON:-}
 ONLY=${ONLY:-}
 EPOCHS_SEG=${EPOCHS_SEG:-40}
@@ -40,6 +43,7 @@ CMD=(python -u -m monai_preproc.sweep --out_dir "$OUT_DIR" --num_workers "$NUM_W
      --preset "$PRESET" --stage "$STAGE"
      --epochs_seg "$EPOCHS_SEG" --epochs_cls "$EPOCHS_CLS")
 if [ -n "$GRID_JSON" ]; then CMD+=(--grid "$GRID_JSON"); fi
+if [ -n "$SHAPE_LOSS" ]; then CMD+=(--shape_loss "$SHAPE_LOSS"); fi
 if [ -n "$ONLY" ]; then CMD+=(--only "$ONLY"); fi
 if [ "$NO_TRAIN" = "1" ]; then CMD+=(--no-train); fi
 

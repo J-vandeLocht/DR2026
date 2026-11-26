@@ -17,7 +17,8 @@ pipelines cannot drift apart.
 
 | File | Purpose |
 |---|---|
-| `configs.py` | `PreprocConfig` + `DEFAULT_GRID` of named configs (seg arch/size, cls backbone/size) for the cost/performance sweep |
+| `configs.py` | `PreprocConfig` + named grids (`DEFAULT_GRID`, `FLEXUNET_GRID`) of configs (seg arch/size, cls backbone/size, seg shape-loss weight) for the cost/performance sweep |
+| `losses.py` | `ellipse_shape_loss`: differentiable ellipse shape prior for the seg stage (matches soft moments of the prediction to the GT mask; for an ellipse the second moments give center + semi-axes) |
 | `transforms.py` | MONAI transform chains; eval/inference chains are numerically equivalent to the albumentations/torchvision ones |
 | `models.py` | MONAI `UNet` / `FlexibleUNet` (seg), MONAI `EfficientNetBN` (cls); checkpoint + config-sidecar I/O; `measure_cost` (params/FLOPs/latency) |
 | `data.py` | Datasets over the existing annotation/split CSVs; **rows whose files are missing on disk are skipped with a warning, never an error** |
@@ -81,6 +82,24 @@ Extend or override a grid with a JSON file:
 `{"my_config": {"seg_img_size": 384, "cls_backbone": "efficientnet-b0", ...}}`;
 `train.py` / `evaluate.py` / `extract.py` take the same `--preset`/`--grid`
 flags to address configs by name.
+
+### Shape-prior loss for the segmentation stage
+
+The crop target is always an axis-aligned ellipse (the annotation CSV stores
+`center_x/center_y/radius_x/radius_y`), so the seg loss can exploit that:
+`losses.py` adds `ellipse_shape_loss` — the MSE between the soft ellipse
+parameters of the predicted probability map and those of the GT mask (for a
+filled ellipse, `a = 2*sqrt(var_x)`, `b = 2*sqrt(var_y)` in normalized
+coordinates, so matching moments = matching center and radii). Training uses
+`DiceCELoss + seg_shape_loss_weight * ellipse_shape_loss`; weight `0` is exactly
+the previous loss.
+
+To compare old vs new loss in one sweep, pass `--shape_loss W`
+(`SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh` with `STAGE=seg`): every config
+is additionally run as a seg-only variant named `<config>_shapeW`. The variants
+appear as separate rows in `sweep_results.csv`/`pareto.csv` and in orange in
+`overview.png`, so the better loss is directly visible per architecture. Set the
+weight per config with `"seg_shape_loss_weight": W` in a `--grid` JSON.
 
 ## Robustness notes
 

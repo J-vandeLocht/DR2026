@@ -5,6 +5,8 @@ A PreprocConfig fully determines the two pre-processing stages:
        ("unet": MONAI UNet with configurable channels/strides,
         "flexunet": MONAI FlexibleUNet with a timm/EfficientNet encoder backbone)
   cls: informative-frame classifier (MONAI EfficientNetBN) + input size
+  seg_shape_loss_weight: weight of the ellipse shape-prior loss on top of the
+       DiceCE seg loss (0.0 = previous loss only; see losses.py)
 
 DEFAULT_GRID is the original mixed grid (UNet vs FlexibleUNet comparison).
 FLEXUNET_GRID is the FlexibleUNet-only architecture search used by
@@ -29,6 +31,7 @@ class PreprocConfig:
     seg_channels: tuple = (32, 64, 128, 256, 512)
     seg_strides: tuple = (2, 2, 2, 2)
     seg_img_size: int = 512
+    seg_shape_loss_weight: float = 0.0
     cls_backbone: str = "efficientnet-b0"
     cls_img_size: int = 384
     batch_size: int = 4

@@ -10,12 +10,15 @@ Pareto-optimal configs are written to <out_dir>/pareto.csv and an overview plot
 <out_dir>/overview.png.
 
     python -u -m monai_preproc.sweep --out_dir results/monai_sweep [--preset flexunet] \
-        [--stage seg] [--grid my_grid.json] [--epochs_seg 40] [--no-train] [--folds 0 1 2 3 4]
+        [--stage seg] [--shape_loss 100] [--grid my_grid.json] [--epochs_seg 40] [--no-train] [--folds 0 1 2 3 4]
     python -u -m monai_preproc.sweep --plot_only results/monai_sweep/sweep_results.csv
 
 Run --stage seg first to pick the segmentation architecture, then --stage cls
 for the informative-frame classifier; both can be re-evaluated from existing
-checkpoints with --no-train.
+checkpoints with --no-train. --shape_loss W additionally runs every config as
+a seg-only '<name>_shapeW' variant trained with DiceCE + W * ellipse shape
+prior (losses.py), doubling the seg experiments so old vs new loss can be
+compared in sweep_results.csv / pareto.csv / overview.png.
 
 Performance metric: seg -> mean micro IoU over folds; cls -> mean PR-AUC.
 Cost metric: seg/cls latency_ms per frame at the config's input size
@@ -34,7 +37,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from .configs import load_grid, GRIDS
+from .configs import PreprocConfig, load_grid, GRIDS
 from .train import train_seg, train_cls
 from .evaluate import evaluate_seg, evaluate_cls
 
@@ -88,8 +91,9 @@ def plot_sweep_overview(df, pareto, out_path):
     for ax, stage in zip(axes[0], stages):
         sub = df[df["stage"] == stage]
         cost = sub["latency_ms"].fillna(sub["params"])
-        ax.scatter(cost, sub["perf"], s=60 + 10 * sub["params"] / 1e6, alpha=0.65,
-                   edgecolor="black", label="config", zorder=3)
+        colors = ["#DD8452" if "_shape" in c else "#4C72B0" for c in sub["config"]]
+        ax.scatter(cost, sub["perf"], s=60 + 10 * sub["params"] / 1e6, c=colors, alpha=0.75,
+                   edgecolor="black", label="config (orange = shape-loss variant)", zorder=3)
         for idx, r in sub.iterrows():
             ax.annotate(r["config"], (cost[idx], r["perf"]), textcoords="offset points",
                         xytext=(7, 5), fontsize=8)
@@ -114,25 +118,40 @@ def run_sweep(grid, out_dir, folds, epochs_seg=None, epochs_cls=None, train=True
               splits_csv="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv",
               img_dir="cropping/frames_to_annotate_larger",
               img_base="data/informative_frames", split_dir="informative_frames",
-              num_workers=4, device=None, stages=("seg", "cls"), log=print):
+              num_workers=4, device=None, stages=("seg", "cls"), seg_shape_weights=(), log=print):
+    """Run every grid config over the folds for the requested stages.
+
+    Each weight in seg_shape_weights adds one seg-only variant per config named
+    '<name>_shape<w>' trained with DiceCE + w * ellipse_shape_loss, so the old
+    and the new seg loss can be compared in the same sweep (and overview plot).
+    """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "sweep_results.csv"
+    jobs = [(name, cfg, stages) for name, cfg in grid.items()]
+    if "seg" in stages:
+        for w in seg_shape_weights:
+            for name, cfg in grid.items():
+                v = PreprocConfig.from_dict(cfg.to_dict())
+                v.name = f"{name}_shape{float(w):g}"
+                v.seg_shape_loss_weight = float(w)
+                jobs.append((v.name, v, ("seg",)))
     rows = []
-    for name, cfg in grid.items():
-        log(f"=== config {name} (seg: {cfg.seg_arch} @ {cfg.seg_img_size}, cls: {cfg.cls_backbone} @ {cfg.cls_img_size}) ===")
+    for name, cfg, job_stages in jobs:
+        shape = f", seg_shape_loss_weight={cfg.seg_shape_loss_weight}" if cfg.seg_shape_loss_weight else ""
+        log(f"=== config {name} (seg: {cfg.seg_arch} @ {cfg.seg_img_size}, cls: {cfg.cls_backbone} @ {cfg.cls_img_size}{shape}) ===")
         seg_models_dir = out_dir / "models" / name / "seg"
         cls_models_dir = out_dir / "models" / name / "cls"
         if train:
             for fold in folds:
-                if "seg" in stages:
+                if "seg" in job_stages:
                     train_seg(cfg, fold, ann_csv, splits_csv, img_dir, seg_models_dir,
                               epochs=epochs_seg, num_workers=num_workers, device=device, log=log)
-                if "cls" in stages:
+                if "cls" in job_stages:
                     train_cls(cfg, fold, img_base, split_dir, cls_models_dir,
                               epochs=epochs_cls, num_workers=num_workers, device=device, log=log)
-        if "seg" in stages:
+        if "seg" in job_stages:
             try:
                 seg_summary = evaluate_seg(cfg, seg_models_dir, ann_csv, splits_csv, img_dir,
                                            out_dir / "eval" / name / "seg", n_splits=len(folds),
@@ -147,7 +166,7 @@ def run_sweep(grid, out_dir, folds, epochs_seg=None, epochs_cls=None, train=True
                 rows.append(seg_row)
             except (RuntimeError, FileNotFoundError) as e:
                 log(f"WARNING: seg evaluation failed for {name}: {e}")
-        if "cls" in stages:
+        if "cls" in job_stages:
             try:
                 cls_summary = evaluate_cls(cfg, cls_models_dir, img_base, split_dir,
                                            out_dir / "eval" / name / "cls", n_splits=len(folds),
@@ -183,6 +202,10 @@ def main(argv=None):
     parser.add_argument("--grid", type=str, default=None, help="JSON file overriding/extending the preset grid.")
     parser.add_argument("--stage", choices=["seg", "cls", "both"], default="both",
                         help="Which pipeline stage(s) to train+evaluate (run seg first, cls later).")
+    parser.add_argument("--shape_loss", type=float, default=None, metavar="W",
+                        help="Also run every config as a seg-only '<name>_shapeW' variant trained with "
+                             "DiceCE + W * ellipse shape-prior loss (losses.py); doubles the seg experiments "
+                             "so old vs new loss can be compared.")
     parser.add_argument("--plot_only", type=str, default=None,
                         help="Skip training/eval: re-render pareto.csv + overview.png from an existing sweep_results.csv.")
     parser.add_argument("--only", type=str, default=None, help="Comma-separated config names to run.")
@@ -216,10 +239,11 @@ def main(argv=None):
         if missing:
             raise SystemExit(f"unknown config(s) {missing}; available: {sorted(grid)}")
     stages = ("seg", "cls") if args.stage == "both" else (args.stage,)
+    shape_weights = (args.shape_loss,) if args.shape_loss else ()
     return run_sweep(grid, args.out_dir, args.folds, epochs_seg=args.epochs_seg, epochs_cls=args.epochs_cls,
                      train=not args.no_train, ann_csv=args.ann_csv, splits_csv=args.splits_csv,
                      img_dir=args.img_dir, img_base=args.img_base, split_dir=args.split_dir,
-                     num_workers=args.num_workers, stages=stages)
+                     num_workers=args.num_workers, stages=stages, seg_shape_weights=shape_weights)
 
 
 if __name__ == "__main__":
