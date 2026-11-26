@@ -49,6 +49,23 @@ def pareto_front(rows, perf_key, cost_key, maximize=True):
     return idx
 
 
+def pareto_per_stage(df):
+    """Pareto-optimal rows per stage (cost = latency_ms, falling back to params).
+
+    Selection happens on each stage's subset, but the returned rows must keep
+    their original df index: sub.index[...] maps Pareto positions back to the
+    full frame, so df.loc[...] picks the right rows (reset_index here would
+    misalign subset positions with full-frame rows).
+    """
+    idx = []
+    for stage in df["stage"].unique():
+        sub = df[df["stage"] == stage]
+        records = [{"perf": r["perf"], "cost": c}
+                   for r, c in zip(sub.to_dict("records"), sub["latency_ms"].fillna(sub["params"]))]
+        idx.extend(sub.index[pareto_front(records, "perf", "cost")].tolist())
+    return df.loc[idx].sort_values(["stage", "latency_ms"])
+
+
 def run_sweep(grid, out_dir, folds, epochs_seg=None, epochs_cls=None, train=True,
               ann_csv="cropping/annotations_cropping_2025.csv",
               splits_csv="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv",
@@ -102,13 +119,7 @@ def run_sweep(grid, out_dir, folds, epochs_seg=None, epochs_cls=None, train=True
         log(f"wrote {results_path} ({len(rows)} rows so far)")
     df = pd.DataFrame(rows)
     if not df.empty:
-        pareto_idx = []
-        for stage in df["stage"].unique():
-            sub = df[df["stage"] == stage].reset_index(drop=True)
-            records = [{"perf": r["perf"], "cost": c}
-                       for r, c in zip(sub.to_dict("records"), sub["latency_ms"].fillna(sub["params"]))]
-            pareto_idx.extend(sub.index[pareto_front(records, "perf", "cost")].tolist())
-        pareto = df.iloc[pareto_idx].sort_values(["stage", "latency_ms"])
+        pareto = pareto_per_stage(df)
         pareto.to_csv(out_dir / "pareto.csv", index=False)
         log("Pareto-optimal configs (per stage):")
         log(pareto.to_string(index=False))

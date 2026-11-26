@@ -23,7 +23,7 @@ from monai_preproc.models import (build_seg_model, build_cls_model, save_checkpo
 from monai_preproc.train import train_seg, train_cls
 from monai_preproc.evaluate import evaluate_seg, evaluate_cls
 from monai_preproc.extract import main as extract_main, load_val_folds
-from monai_preproc.sweep import pareto_front
+from monai_preproc.sweep import pareto_front, pareto_per_stage
 from misc.utils import apply_clahe_cv2
 from cropping.segmentation_pipeline import get_transforms as albu_get_transforms
 
@@ -278,3 +278,24 @@ def test_pareto_front():
             {"perf": 0.8, "cost": 10.0}]    # pareto (cheapest)
     idx = pareto_front(rows, "perf", "cost", maximize=True)
     assert set(idx) == {1, 2}
+
+
+def test_pareto_per_stage_keeps_full_frame_rows():
+    # run_sweep appends one seg + one cls row per config, interleaved by stage;
+    # the Pareto selection per stage must map back to the original df rows
+    df = pd.DataFrame([
+        {"config": "a", "stage": "seg", "perf": 0.9, "params": 100, "latency_ms": 20.0},
+        {"config": "a", "stage": "cls", "perf": 0.95, "params": 50, "latency_ms": 10.0},
+        {"config": "b", "stage": "seg", "perf": 0.8, "params": 10, "latency_ms": 2.0},
+        {"config": "b", "stage": "cls", "perf": 0.96, "params": 5, "latency_ms": 1.0},
+    ])
+    pareto = pareto_per_stage(df)
+    assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}
+
+
+def test_grid_unet_strides_match_channels():
+    # MONAI UNet expects len(strides) == len(channels) - 1 (extra strides are
+    # ignored with a UserWarning); the grid must not trigger that warning
+    for cfg in DEFAULT_GRID.values():
+        if cfg.seg_arch == "unet":
+            assert len(cfg.seg_strides) == len(cfg.seg_channels) - 1

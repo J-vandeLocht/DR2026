@@ -23,8 +23,11 @@ from .configs import PreprocConfig
 def build_seg_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
     pre = cfg.pretrained if pretrained is None else pretrained
     if cfg.seg_arch == "unet":
+        # MONAI expects len(strides) == len(channels) - 1 and ignores extra strides
+        # (with a UserWarning); truncate so legacy config sidecars stay quiet too.
+        strides = list(cfg.seg_strides)[: len(cfg.seg_channels) - 1]
         return UNet(spatial_dims=2, in_channels=3, out_channels=1,
-                    channels=list(cfg.seg_channels), strides=list(cfg.seg_strides),
+                    channels=list(cfg.seg_channels), strides=strides,
                     num_res_units=2)
     if cfg.seg_arch == "flexunet":
         return FlexibleUNet(in_channels=3, out_channels=1, backbone=cfg.seg_backbone,
