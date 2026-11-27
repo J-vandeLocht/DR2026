@@ -34,8 +34,8 @@ is found.
 
 On top of the original, training adds **TensorBoard logging**
 (`<out_dir>/runs/fold_<i>/`; `tensorboard --logdir <out_dir>/runs`), **early
-stopping** (`patience=3` in the config; `0` disables, e.g. `--patience 0` or
-`"patience": 0` in a grid JSON), and a **2×5 visualization saved on every
+stopping** (`patience=3` by default; disable with `PATIENCE=0 sbatch
+scripts/monai_sweep.sh` or `--patience 0`), and a **2×5 visualization saved on every
 new best val IoU** (`<out_dir>/vis/fold<i>_best_epoch<e>.png`: top row = original
 val images, bottom row = image with everything outside the predicted mask
 blacked out; also logged to TensorBoard as `val/best_masked`).

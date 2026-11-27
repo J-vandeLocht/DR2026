@@ -110,7 +110,7 @@ def run_sweep(grid, out_dir, folds, epochs=None, train=True,
               splits_csv="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv",
               img_dir="cropping/frames_to_annotate_larger",
               num_workers=4, device=None, seg_shape_weights=(), shape_variants_only=False,
-              log=print):
+              patience=None, log=print):
     """Run every grid config over the folds.
 
     Each weight in seg_shape_weights adds one variant per config named
@@ -137,7 +137,8 @@ def run_sweep(grid, out_dir, folds, epochs=None, train=True,
         if train:
             for fold in folds:
                 train_seg(cfg, fold, ann_csv, splits_csv, img_dir, seg_models_dir,
-                          epochs=epochs, num_workers=num_workers, device=device, log=log)
+                          epochs=epochs, patience=patience, num_workers=num_workers,
+                          device=device, log=log)
         try:
             seg_summary = evaluate_seg(cfg, seg_models_dir, ann_csv, splits_csv, img_dir,
                                        out_dir / "eval" / name / "seg", n_splits=len(folds),
@@ -182,6 +183,8 @@ def main(argv=None):
     parser.add_argument("--only", type=str, default=None, help="Comma-separated config names to run.")
     parser.add_argument("--folds", type=int, nargs="+", default=[0, 1, 2, 3, 4])
     parser.add_argument("--epochs", type=int, default=None)
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Early stopping patience passed to training; 0 disables (default: config value, 3).")
     parser.add_argument("--no-train", action="store_true", help="Only evaluate existing checkpoints.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--ann_csv", type=str, default="cropping/annotations_cropping_2025.csv")
@@ -212,7 +215,8 @@ def main(argv=None):
     return run_sweep(grid, args.out_dir, args.folds, epochs=args.epochs,
                      train=not args.no_train, ann_csv=args.ann_csv, splits_csv=args.splits_csv,
                      img_dir=args.img_dir, num_workers=args.num_workers,
-                     seg_shape_weights=shape_weights, shape_variants_only=args.only_shape_loss)
+                     seg_shape_weights=shape_weights, shape_variants_only=args.only_shape_loss,
+                     patience=args.patience)
 
 
 if __name__ == "__main__":

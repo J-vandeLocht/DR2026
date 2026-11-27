@@ -216,7 +216,7 @@ def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
     grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
     out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
+    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True, patience=0,
                    ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
                    num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
     assert set(df["stage"]) == {"seg"}
