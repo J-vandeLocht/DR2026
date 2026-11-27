@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --partition=A40medium
+#SBATCH --partition=A40devel
 #SBATCH --time=01:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
