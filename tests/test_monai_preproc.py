@@ -1,44 +1,30 @@
-"""Tests for the additive monai_preproc package.
-
+"""
 Run from the repo root:  python -m pytest tests/test_monai_preproc.py -q
-All tests are CPU-only and use synthetic data (random frames, tiny synthetic
-videos), so they run without the cluster, GPU or the real Paxos data.
+All tests are CPU-only and use synthetic data (random frames), so they run
+without the cluster, GPU or the real Paxos data.
 """
 
 import json
-import re
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pandas as pd
-import pytest
 import torch
-from PIL import Image
 
 from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, FLEXUNET_GRID, load_grid
-from monai_preproc.transforms import seg_val_transforms, clahe_np
-from monai_preproc.models import (build_seg_model, build_cls_model, save_checkpoint,
-                                  load_seg_model, load_cls_model, measure_cost)
-from monai_preproc.train import train_seg, train_cls
-from monai_preproc.evaluate import evaluate_seg, evaluate_cls
-from monai_preproc.extract import main as extract_main, load_val_folds
+from monai_preproc.transforms import seg_val_transforms
+from monai_preproc.models import build_seg_model, save_checkpoint, load_seg_model, measure_cost
+from monai_preproc.train import train_seg
+from monai_preproc.evaluate import evaluate_seg
 from monai_preproc.losses import ellipse_moments, ellipse_shape_loss
 from monai_preproc.sweep import pareto_front, pareto_per_stage
-from misc.utils import apply_clahe_cv2
 from cropping.segmentation_pipeline import get_transforms as albu_get_transforms
 
 
 def tiny_cfg(name="tiny"):
     return PreprocConfig(name=name, seg_arch="unet", seg_channels=(8, 16, 32), seg_strides=(2, 2),
-                         seg_img_size=64, cls_backbone="efficientnet-b0", cls_img_size=64,
-                         batch_size=2, cls_batch_size=2, epochs=1, cls_epochs=1)
-
-
-def tiny_grid_file(tmp_path):
-    p = tmp_path / "grid.json"
-    p.write_text(json.dumps({"tiny": tiny_cfg().to_dict()}))
-    return str(p)
+                         seg_img_size=64, batch_size=2, epochs=1, patience=3)
 
 
 def random_frame(h=96, w=96, seed=0):
@@ -52,7 +38,7 @@ def test_grid_loads(tmp_path):
     grid = load_grid(None)
     assert set(grid) == set(DEFAULT_GRID)
     override = tmp_path / "grid.json"
-    override.write_text(json.dumps({"custom": {"seg_img_size": 256, "cls_backbone": "efficientnet-b0"}}))
+    override.write_text(json.dumps({"custom": {"seg_img_size": 256, "seg_backbone": "efficientnet-b0"}}))
     grid2 = load_grid(str(override))
     assert grid2["custom"].seg_img_size == 256
     assert "unet_tiny_256" in grid2
@@ -60,6 +46,14 @@ def test_grid_loads(tmp_path):
     assert set(flex) == set(FLEXUNET_GRID)
     assert all(c.seg_arch == "flexunet" for c in flex.values())
     assert all(c.pretrained for c in flex.values())
+
+
+def test_grid_unet_strides_match_channels():
+    # MONAI UNet expects len(strides) == len(channels) - 1 (extra strides are
+    # ignored with a UserWarning); the grid must not trigger that warning
+    for cfg in DEFAULT_GRID.values():
+        if cfg.seg_arch == "unet":
+            assert len(cfg.seg_strides) == len(cfg.seg_channels) - 1
 
 
 def test_seg_val_transform_parity_with_albumentations():
@@ -76,21 +70,12 @@ def test_seg_val_transform_parity_with_albumentations():
     assert torch.allclose(out_monai["mask"][0], out_albu["mask"], atol=1e-6)
 
 
-def test_clahe_parity_with_existing_utils():
-    img = random_frame(80, 80, seed=2)
-    ref = np.array(apply_clahe_cv2(Image.fromarray(img)))
-    out = clahe_np(img.transpose(2, 0, 1).copy()).transpose(1, 2, 0)
-    assert np.array_equal(out, ref)
-
-
 def test_models_forward_and_cost():
     cfg = tiny_cfg()
     seg = build_seg_model(cfg)
-    cls = build_cls_model(cfg)
     x = torch.randn(2, 3, 64, 64)
     with torch.no_grad():
         assert seg(x).shape == (2, 1, 64, 64)
-        assert cls(x).shape == (2, 1)
     cost = measure_cost(seg, 64, torch.device("cpu"))
     assert cost["params"] > 0 and cost["latency_ms"] > 0 and cost["img_size"] == 64
 
@@ -133,148 +118,47 @@ def test_train_seg_and_evaluate_end_to_end(tmp_path):
                     epochs=1, batch_size=2, num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
     assert Path(res["model"]).exists()
     assert (models_dir / "seg_fold_0.json").exists()
-    assert (models_dir / "seg_fold_0_log.json").exists()
+    assert not (models_dir / "seg_fold_0_log.json").exists()  # TensorBoard instead of json logs
+    assert list((models_dir / "runs" / "fold_0").glob("events.*")), "tensorboard events missing"
+    assert list((models_dir / "vis").glob("fold0_best_epoch*.png")), "best-IoU 2x5 plot missing"
     out_dir = tmp_path / "eval"
     summary = evaluate_seg(cfg, str(models_dir), str(ann_csv), str(splits_csv), str(img_dir),
                            str(out_dir), n_splits=1, batch_size=2, num_workers=0,
                            device=torch.device("cpu"), log=lambda *a: None)
     for f in ["per_image_metrics.csv", "summary.csv", "bar_summary.csv", "segmentation_eval.png"]:
         assert (out_dir / f).exists(), f
-    assert {"micro_iou", "params", "flops", "latency_ms", "seg_img_size"} <= set(summary.columns)
+    assert {"micro_iou", "macro_iou", "params", "flops", "latency_ms", "seg_img_size"} <= set(summary.columns)
     assert len(summary) == 1
 
 
-def make_cls_fixture(tmp_path, n_per_label=3):
-    img_base = tmp_path / "inf"
-    split_dir = tmp_path / "split"
-    split_dir.mkdir()
-    rows = []
-    for label in (0, 1):
-        d = img_base / "frames_cropped" / str(label)
-        d.mkdir(parents=True)
-        for i in range(n_per_label):
-            name = f"fr{label}{i}.png"
-            cv2.imwrite(str(d / name), random_frame(seed=100 + label * 10 + i))
-            rows.append({"filename": name, "video_id": f"vid{label}{i}", "label": label,
-                         "fold": 0, "split": "train" if i < n_per_label - 1 else "val"})
-    (split_dir / "split_info_5fold_paxos2025_from_q5v3.csv").write_text(pd.DataFrame(rows).to_csv(index=False))
-    return img_base, split_dir
-
-
-def test_train_cls_and_evaluate_end_to_end(tmp_path):
+def test_train_seg_early_stopping(tmp_path, monkeypatch):
+    import monai_preproc.train as train_mod
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    monkeypatch.setattr(train_mod, "binary_counts",
+                        lambda pred, target: tuple(torch.zeros(pred.shape[0], dtype=torch.long) for _ in range(4)))
     cfg = tiny_cfg()
-    img_base, split_dir = make_cls_fixture(tmp_path)
-    models_dir = tmp_path / "cls_models"
-    res = train_cls(cfg, 0, str(img_base), str(split_dir), str(models_dir),
-                    epochs=1, batch_size=2, num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
+    res = train_mod.train_seg(cfg, 0, str(ann_csv), str(splits_csv), str(img_dir), str(tmp_path / "m"),
+                              epochs=5, patience=2, num_workers=0, device=torch.device("cpu"),
+                              log=lambda *a: None)
+    # val IoU is 0 every epoch: epoch 0 improves over -1, then patience=2 stops at epoch 2
+    assert res["epochs_run"] == 3
+    assert res["best_epoch"] == 0
     assert Path(res["model"]).exists()
-    out_dir = tmp_path / "cls_eval"
-    summary = evaluate_cls(cfg, str(models_dir), str(img_base), str(split_dir), str(out_dir),
-                           n_splits=1, batch_size=2, num_workers=0, device=torch.device("cpu"),
-                           log=lambda *a: None)
-    for f in ["per_image_metrics.csv", "summary.csv", "bar_summary.csv", "classification_eval.png"]:
-        assert (out_dir / f).exists(), f
-    assert {"pr_auc", "params", "latency_ms", "cls_img_size"} <= set(summary.columns)
 
 
-def make_video(path, n_frames=10, w=64, h=48, seed=0):
-    rng = np.random.RandomState(seed)
-    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 10, (w, h))
-    assert writer.isOpened()
-    for i in range(n_frames):
-        frame = rng.randint(0, 255, size=(h, w, 3), dtype=np.uint8)
-        cv2.circle(frame, (w // 2, h // 2), min(w, h) // 4, (200, 200, 200), -1)
-        writer.write(frame)
-    writer.release()
-    assert path.exists() and path.stat().st_size > 0
-
-
-def make_extract_fixture(tmp_path):
+def test_vis_seg_fold_writes_png_and_csv(tmp_path):
+    from monai_preproc.vis_seg import vis_seg_fold
     cfg = tiny_cfg()
-    video_dir = tmp_path / "videos"
-    video_dir.mkdir()
-    make_video(video_dir / "vidA.mp4", seed=5)
-    (video_dir / "vidD.mp4").write_text("not a video")  # corrupt: on disk, unreadable
-    q5_dir = tmp_path / "q5"
-    for fold in range(1, 2):
-        d = q5_dir / f"split_{fold}"
-        d.mkdir(parents=True)
-        (d / "mil_val_2025.json").write_text(json.dumps(
-            {"vidA.mp4": 2, "vidB.mp4": 3, "vidC.mp4": 0, "vidD.mp4": 1}))
-    seg_csv = tmp_path / "seg_splits.csv"
-    cls_csv = tmp_path / "cls_splits.csv"
-    pd.DataFrame([{"video_id": v, "fold": 0, "split": "val"} for v in ["vidA", "vidB", "vidC", "vidD"]]
-                 ).to_csv(seg_csv, index=False)
-    pd.DataFrame([{"video_id": v, "fold": 0, "split": "val"} for v in ["vidA", "vidB", "vidC", "vidD"]]
-                 ).to_csv(cls_csv, index=False)
-    seg_models = tmp_path / "seg_models"
-    cls_models = tmp_path / "cls_models"
-    save_checkpoint(build_seg_model(cfg), cfg, seg_models / "seg_fold_0.pth")
-    save_checkpoint(build_cls_model(cfg), cfg, cls_models / "cls_fold_0.pth")
-    return cfg, video_dir, q5_dir, seg_csv, cls_csv, seg_models, cls_models
-
-
-def test_extract_skips_missing_and_corrupt_videos_and_matching_works(tmp_path, capsys):
-    from data.dataset import MILVideoDataset
-    cfg, video_dir, q5_dir, seg_csv, cls_csv, seg_models, cls_models = make_extract_fixture(tmp_path)
-    out_base = tmp_path / "out"
-    grid = tiny_grid_file(tmp_path)
-    res = extract_main([
-        "--video_dir", str(video_dir), "--q5_dir", str(q5_dir),
-        "--seg_split_csv", str(seg_csv), "--cls_split_csv", str(cls_csv),
-        "--seg_model_dir", str(seg_models), "--cls_model_dir", str(cls_models),
-        "--out_base", str(out_base), "--n_splits", "1", "--infer_batch_size", "4",
-        "--min_informative_frames", "3", "--grid", grid, "--config", "tiny",
-    ])
-    captured = capsys.readouterr().out
-    assert "WARNING" in captured and "not present" in captured
-    assert res["done"] == 1 and res["skipped"] == 1 and res["missing_locally"] == 2
-    vid_dir = out_base / "cleaned_videos"
-    assert (vid_dir / "CLEAN_vidA.mp4").exists()
-    assert (out_base / "txt_files" / "vidA.txt").exists()
-    assert (out_base / "plots" / "vidA.png").exists()
-    assert not (vid_dir / "CLEAN_vidB.mp4").exists()
-
-    label_json = tmp_path / "labels.json"
-    label_json.write_text(json.dumps({"vidA.mp4": 2}))
-    ds = MILVideoDataset(str(label_json), search_dir_paths=[str(vid_dir)])
-    assert len(ds) == 1
-    assert ds.labels == [1]
-    assert re.search(r"vidA(?![a-zA-Z0-9])", "CLEAN_vidA.mp4")
-
-    res2 = extract_main([
-        "--video_dir", str(video_dir), "--q5_dir", str(q5_dir),
-        "--seg_split_csv", str(seg_csv), "--cls_split_csv", str(cls_csv),
-        "--seg_model_dir", str(seg_models), "--cls_model_dir", str(cls_models),
-        "--out_base", str(out_base), "--n_splits", "1", "--infer_batch_size", "4",
-        "--min_informative_frames", "3", "--grid", grid, "--config", "tiny",
-    ])
-    assert res2["done"] == 0 and res2["skipped"] == 1  # vidA outputs exist -> skipped; vidD still unreadable
-
-
-def test_extract_rejects_protected_out_base(tmp_path):
-    cfg, video_dir, q5_dir, seg_csv, cls_csv, seg_models, cls_models = make_extract_fixture(tmp_path)
-    with pytest.raises(SystemExit):
-        extract_main([
-            "--video_dir", str(video_dir), "--q5_dir", str(q5_dir),
-            "--seg_split_csv", str(seg_csv), "--cls_split_csv", str(cls_csv),
-            "--seg_model_dir", str(seg_models), "--cls_model_dir", str(cls_models),
-            "--out_base", "data/ensemble_results_paxos2025", "--n_splits", "1",
-            "--grid", tiny_grid_file(tmp_path), "--config", "tiny",
-        ])
-
-
-def test_load_val_folds_warns_instead_of_asserting(tmp_path, capsys):
-    csv = tmp_path / "sp.csv"
-    pd.DataFrame([{"video_id": "vidX", "fold": 0, "split": "val"},
-                  {"video_id": "vidX", "fold": 2, "split": "val"},
-                  {"video_id": "vidY", "fold": 1, "split": "val"}]).to_csv(csv, index=False)
-    mapping = load_val_folds(str(csv), log=lambda *a: None)
-    assert mapping == {"vidX": 0, "vidY": 1}
-    captured = capsys.readouterr().out
-    assert captured == ""
-    mapping2 = load_val_folds(str(csv))
-    assert mapping2["vidX"] == 0
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    models_dir = tmp_path / "models"
+    train_seg(cfg, 0, str(ann_csv), str(splits_csv), str(img_dir), str(models_dir),
+              epochs=1, batch_size=2, num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
+    out_dir = tmp_path / "vis"
+    png, csv = vis_seg_fold(cfg, 0, models_dir, str(ann_csv), str(splits_csv), str(img_dir),
+                            str(out_dir), n_images=2, batch_size=2, num_workers=0,
+                            device=torch.device("cpu"), log=lambda *a: None)
+    assert png.exists() and csv.exists()
+    assert len(pd.read_csv(csv)) == 2
 
 
 def test_pareto_front():
@@ -286,8 +170,8 @@ def test_pareto_front():
 
 
 def test_pareto_per_stage_keeps_full_frame_rows():
-    # run_sweep appends one seg + one cls row per config, interleaved by stage;
-    # the Pareto selection per stage must map back to the original df rows
+    # run_sweep appends one row per config; the Pareto selection per stage must
+    # map back to the original df rows
     df = pd.DataFrame([
         {"config": "a", "stage": "seg", "perf": 0.9, "params": 100, "latency_ms": 20.0},
         {"config": "a", "stage": "cls", "perf": 0.95, "params": 50, "latency_ms": 10.0},
@@ -295,49 +179,6 @@ def test_pareto_per_stage_keeps_full_frame_rows():
         {"config": "b", "stage": "cls", "perf": 0.96, "params": 5, "latency_ms": 1.0},
     ])
     pareto = pareto_per_stage(df)
-    assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}
-
-
-def test_grid_unet_strides_match_channels():
-    # MONAI UNet expects len(strides) == len(channels) - 1 (extra strides are
-    # ignored with a UserWarning); the grid must not trigger that warning
-    for cfg in DEFAULT_GRID.values():
-        if cfg.seg_arch == "unet":
-            assert len(cfg.seg_strides) == len(cfg.seg_channels) - 1
-
-
-def test_sweep_seg_only_writes_csv_pareto_and_overview_plot(tmp_path):
-    from monai_preproc.sweep import run_sweep
-    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
-    out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs_seg=1, epochs_cls=1, train=True,
-                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                   num_workers=0, device=torch.device("cpu"), stages=("seg",),
-                   log=lambda *a: None)
-    assert set(df["stage"]) == {"seg"}
-    assert (out_dir / "sweep_results.csv").exists()
-    assert (out_dir / "pareto.csv").exists()
-    assert (out_dir / "overview.png").exists()
-    assert (out_dir / "models" / "tiny" / "seg" / "seg_fold_0.pth").exists()
-    assert not (out_dir / "models" / "tiny" / "cls").exists()
-
-
-def test_sweep_plot_only_rerenders_outputs(tmp_path):
-    from monai_preproc.sweep import main as sweep_main
-    df = pd.DataFrame([
-        {"config": "a", "stage": "seg", "perf": 0.9, "params": 100, "flops": None, "latency_ms": 20.0, "img_size": 64, "arch": "unet"},
-        {"config": "a", "stage": "cls", "perf": 0.95, "params": 50, "flops": None, "latency_ms": 10.0, "img_size": 64, "arch": "efficientnet-b0"},
-        {"config": "b", "stage": "seg", "perf": 0.8, "params": 10, "flops": None, "latency_ms": 2.0, "img_size": 64, "arch": "unet"},
-        {"config": "b", "stage": "cls", "perf": 0.96, "params": 5, "flops": None, "latency_ms": 1.0, "img_size": 64, "arch": "efficientnet-b0"},
-    ])
-    csv = tmp_path / "sweep_results.csv"
-    df.to_csv(csv, index=False)
-    out = tmp_path / "out"
-    res = sweep_main(["--plot_only", str(csv), "--out_dir", str(out)])
-    assert len(res) == 4
-    assert (out / "pareto.csv").exists() and (out / "overview.png").exists()
-    pareto = pd.read_csv(out / "pareto.csv")
     assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}
 
 
@@ -358,17 +199,49 @@ def test_ellipse_moments_recover_ellipse_and_shape_loss_gradients():
     assert logits.grad is not None and logits.grad.abs().sum() > 0
 
 
-def test_sweep_shape_loss_adds_seg_only_variants(tmp_path):
+def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     from monai_preproc.sweep import run_sweep
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
     grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
     out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs_seg=1, epochs_cls=1, train=True,
+    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
                    ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                   num_workers=0, device=torch.device("cpu"), stages=("seg",),
-                   seg_shape_weights=(100.0,), log=lambda *a: None)
+                   num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
+    assert set(df["stage"]) == {"seg"}
+    assert (out_dir / "sweep_results.csv").exists()
+    assert (out_dir / "pareto.csv").exists()
+    assert (out_dir / "overview.png").exists()
+    assert (out_dir / "models" / "tiny" / "seg" / "seg_fold_0.pth").exists()
+
+
+def test_sweep_shape_loss_adds_variants(tmp_path):
+    from monai_preproc.sweep import run_sweep
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
+    out_dir = tmp_path / "sweep"
+    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
+                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
+                   num_workers=0, device=torch.device("cpu"), seg_shape_weights=(100.0,),
+                   log=lambda *a: None)
     assert set(df["config"]) == {"tiny", "tiny_shape100"}
     assert set(df["stage"]) == {"seg"}
     assert (out_dir / "models" / "tiny_shape100" / "seg" / "seg_fold_0.pth").exists()
-    assert not (out_dir / "models" / "tiny_shape100" / "cls").exists()
     assert (out_dir / "overview.png").exists()
+
+
+def test_sweep_plot_only_rerenders_outputs(tmp_path):
+    from monai_preproc.sweep import main as sweep_main
+    df = pd.DataFrame([
+        {"config": "a", "stage": "seg", "perf": 0.9, "params": 100, "flops": None, "latency_ms": 20.0, "img_size": 64, "arch": "unet"},
+        {"config": "a", "stage": "cls", "perf": 0.95, "params": 50, "flops": None, "latency_ms": 10.0, "img_size": 64, "arch": "efficientnet-b0"},
+        {"config": "b", "stage": "seg", "perf": 0.8, "params": 10, "flops": None, "latency_ms": 2.0, "img_size": 64, "arch": "unet"},
+        {"config": "b", "stage": "cls", "perf": 0.96, "params": 5, "flops": None, "latency_ms": 1.0, "img_size": 64, "arch": "efficientnet-b0"},
+    ])
+    csv = tmp_path / "sweep_results.csv"
+    df.to_csv(csv, index=False)
+    out = tmp_path / "out"
+    res = sweep_main(["--plot_only", str(csv), "--out_dir", str(out)])
+    assert len(res) == 4
+    assert (out / "pareto.csv").exists() and (out / "overview.png").exists()
+    pareto = pd.read_csv(out / "pareto.csv")
+    assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}

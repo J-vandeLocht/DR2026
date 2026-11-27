@@ -1,11 +1,10 @@
-"""Datasets for the MONAI pre-processing pipeline.
+"""Data loading for the MONAI segmentation stage.
 
-Same data sources as the existing pipeline (cropping/annotations_cropping_2025.csv
-+ the q5_v3-derived split CSVs; informative_frames split CSV + cropped frames),
-so the anti-leakage val-fold protocol is identical. Unlike the existing
-datasets, rows whose files are not present on disk are skipped with a warning
-instead of raising -- the annotation CSVs can list frames/videos that are not
-downloaded locally, and that must never abort a run.
+Same data source as cropping/train_segmentation.py (cropping/annotations_cropping_2025.csv
++ the q5_v3-derived split CSVs), so the anti-leakage val-fold protocol is
+identical. Unlike the original FundusDataset, rows whose files are not present
+on disk are skipped with a warning instead of raising -- the annotation CSV can
+list frames that are not downloaded locally, and that must never abort a run.
 """
 
 import cv2
@@ -24,25 +23,6 @@ def load_seg_fold(ann_csv, splits_csv, fold):
     train_files = sp[sp["split"] == "train"]["filename"]
     val_files = sp[sp["split"] == "val"]["filename"]
     return df[df["filename"].isin(train_files)], df[df["filename"].isin(val_files)]
-
-
-def load_cls_samples(fold, split, img_base, split_dir):
-    """(path, label) pairs for one fold+split of the informative-frame CSV, over
-    <img_base>/frames_cropped/<label>/<filename>. Missing files are skipped with
-    a warning (mirrors informative_frames.classify_frames.build_samples but
-    never fails on missing files)."""
-    split_csv_path = Path(split_dir) / "split_info_5fold_paxos2025_from_q5v3.csv"
-    df = pd.read_csv(split_csv_path)
-    df = df[(df["fold"] == fold) & (df["split"] == split)]
-    folder = Path(img_base) / "frames_cropped"
-    samples, missing = [], []
-    for row in df.itertuples():
-        path = folder / str(int(row.label)) / row.filename
-        (samples.append((path, int(row.label))) if path.exists() else missing.append(path.name))
-    if missing:
-        print(f"WARNING: {len(missing)}/{len(df)} {split} rows of {split_csv_path.name} (fold {fold}) "
-              f"not found under {folder} -- skipped, e.g. {missing[:3]}")
-    return samples
 
 
 def make_fundus_mask(row, shape):
@@ -91,26 +71,3 @@ class MonaiFundusDataset(Dataset):
         if self.transform:
             item = self.transform(item)
         return item
-
-
-class MonaiFrameDataset(Dataset):
-    """(path, label) samples with a dict transform, mirroring
-    informative_frames.classify_frames.FrameDataset."""
-
-    def __init__(self, samples, transform=None):
-        self.samples = samples
-        self.transform = transform
-
-    def __len__(self):
-        return len(self.samples)
-
-    def __getitem__(self, index):
-        path, y = self.samples[index]
-        image = cv2.imread(str(path))
-        if image is None:
-            raise FileNotFoundError(f"unreadable image {path}")
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        item = {"image": image, "filename": path.name}
-        if self.transform:
-            item = self.transform(item)
-        return item["image"], y

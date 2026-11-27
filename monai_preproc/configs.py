@@ -1,24 +1,27 @@
-"""Named pre-processing configurations for the MONAI pipeline and the cost/performance sweep.
+"""Named segmentation configurations for the MONAI pipeline and the cost/performance sweep.
 
-A PreprocConfig fully determines the two pre-processing stages:
-  seg: fundus-cropping segmentation model + input size
-       ("unet": MONAI UNet with configurable channels/strides,
-        "flexunet": MONAI FlexibleUNet with a timm/EfficientNet encoder backbone)
-  cls: informative-frame classifier (MONAI EfficientNetBN) + input size
+A PreprocConfig fully determines the segmentation stage (the informative-frame
+classifier is a separate pipeline and is re-added later):
+  arch: "unet" (MONAI UNet, configurable channels/strides) or "flexunet"
+        (MONAI FlexibleUNet with an ImageNet-pretrained EfficientNet encoder --
+        the MONAI counterpart of cropping/'s smp.UnetPlusPlus(EfficientNet-B4))
   seg_shape_loss_weight: weight of the ellipse shape-prior loss on top of the
-       DiceCE seg loss (0.0 = previous loss only; see losses.py)
+        Dice loss (0.0 = plain Dice, exactly like cropping/train_segmentation.py)
+
+Training hyperparameters mirror cropping/train_segmentation.py (the original
+UNet++ pipeline): Adam(lr=1e-4), batch_size=4, epochs=40, Dice loss from logits,
+best-val-micro-IoU checkpoint seg_fold_<fold>.pth; early stopping (patience=3)
+and TensorBoard logging are added on top in train.py.
 
 DEFAULT_GRID is the original mixed grid (UNet vs FlexibleUNet comparison).
 FLEXUNET_GRID is the FlexibleUNet-only architecture search used by
-monai_preproc.sweep by default (--preset flexunet): EfficientNet-B0..B4
-backbones at 256..768 input, since the sweep showed plain UNet encoders
-cannot match the pretrained FlexibleUNet encoder on the fundus crop mask.
-load_grid selects a named grid (GRIDS[preset]) and optionally
-extends/overrides it from a JSON file ({name: {field: value, ...}}).
+monai_preproc.sweep by default (--preset flexunet). load_grid selects a named
+grid (GRIDS[preset]) and optionally extends/overrides it from a JSON file
+({name: {field: value, ...}}).
 """
 
 import json
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from pathlib import Path
 
 
@@ -30,16 +33,12 @@ class PreprocConfig:
     pretrained: bool = False
     seg_channels: tuple = (32, 64, 128, 256, 512)
     seg_strides: tuple = (2, 2, 2, 2)
-    seg_img_size: int = 512
+    seg_img_size: int = 768
     seg_shape_loss_weight: float = 0.0
-    cls_backbone: str = "efficientnet-b0"
-    cls_img_size: int = 384
     batch_size: int = 4
-    cls_batch_size: int = 16
     lr: float = 1e-4
-    cls_lr: float = 1e-4
     epochs: int = 40
-    cls_epochs: int = 10
+    patience: int = 3
 
     def to_dict(self):
         d = asdict(self)
@@ -62,67 +61,59 @@ DEFAULT_GRID = {
     "baseline_flexunet_b4_768": PreprocConfig(
         name="baseline_flexunet_b4_768",
         seg_arch="flexunet", seg_backbone="efficientnet-b4", seg_img_size=768,
-        cls_backbone="efficientnet-b4", cls_img_size=512, batch_size=4, cls_batch_size=16,
         pretrained=True,
     ),
     "flexunet_b1_512": PreprocConfig(
         name="flexunet_b1_512",
         seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=512,
-        cls_backbone="efficientnet-b1", cls_img_size=384, pretrained=True,
+        pretrained=True,
     ),
     "unet_medium_512": PreprocConfig(
         name="unet_medium_512",
         seg_arch="unet", seg_channels=(32, 64, 128, 256, 512), seg_strides=(2, 2, 2, 2),
-        seg_img_size=512, cls_backbone="efficientnet-b0", cls_img_size=384, pretrained=True,
+        seg_img_size=512, pretrained=True,
     ),
     "unet_small_384": PreprocConfig(
         name="unet_small_384",
         seg_arch="unet", seg_channels=(16, 32, 64, 128), seg_strides=(2, 2, 2),
-        seg_img_size=384, cls_backbone="efficientnet-b0", cls_img_size=320,
-        batch_size=8, cls_batch_size=32, pretrained=True,
+        seg_img_size=384, batch_size=8, pretrained=True,
     ),
     "unet_tiny_256": PreprocConfig(
         name="unet_tiny_256",
         seg_arch="unet", seg_channels=(8, 16, 32, 64), seg_strides=(2, 2, 2),
-        seg_img_size=256, cls_backbone="efficientnet-b0", cls_img_size=224,
-        batch_size=16, cls_batch_size=64, pretrained=True,
+        seg_img_size=256, batch_size=16, pretrained=True,
     ),
 }
-
 
 FLEXUNET_GRID = {
     "flexunet_b0_256": PreprocConfig(
         name="flexunet_b0_256",
         seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=256,
-        cls_backbone="efficientnet-b0", cls_img_size=224,
-        batch_size=16, cls_batch_size=64, pretrained=True,
+        batch_size=16, pretrained=True,
     ),
     "flexunet_b0_384": PreprocConfig(
         name="flexunet_b0_384",
         seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=384,
-        cls_backbone="efficientnet-b0", cls_img_size=320,
-        batch_size=8, cls_batch_size=32, pretrained=True,
+        batch_size=8, pretrained=True,
     ),
     "flexunet_b1_384": PreprocConfig(
         name="flexunet_b1_384",
         seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=384,
-        cls_backbone="efficientnet-b0", cls_img_size=320,
-        batch_size=8, cls_batch_size=32, pretrained=True,
+        batch_size=8, pretrained=True,
     ),
     "flexunet_b1_512": PreprocConfig(
         name="flexunet_b1_512",
         seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=512,
-        cls_backbone="efficientnet-b1", cls_img_size=384, pretrained=True,
+        pretrained=True,
     ),
     "flexunet_b2_512": PreprocConfig(
         name="flexunet_b2_512",
         seg_arch="flexunet", seg_backbone="efficientnet-b2", seg_img_size=512,
-        cls_backbone="efficientnet-b0", cls_img_size=384, pretrained=True,
+        pretrained=True,
     ),
     "flexunet_b4_768": PreprocConfig(
         name="flexunet_b4_768",
         seg_arch="flexunet", seg_backbone="efficientnet-b4", seg_img_size=768,
-        cls_backbone="efficientnet-b0", cls_img_size=512, batch_size=4, cls_batch_size=16,
         pretrained=True,
     ),
 }

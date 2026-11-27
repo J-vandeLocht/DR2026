@@ -1,13 +1,11 @@
-"""Model builders and checkpoint I/O for the MONAI pre-processing pipeline.
+"""Segmentation model builder and checkpoint I/O for the MONAI pipeline.
 
-Seg stage: MONAI UNet (configurable channels/strides) or MONAI FlexibleUNet
-(timm/EfficientNet encoder backbone). Cls stage: MONAI EfficientNetBN with a
-single-logit head, same role as the torchvision efficientnet_b4 classifier in
-informative_frames/classify_frames.py.
+MONAI UNet (configurable channels/strides) or MONAI FlexibleUNet (ImageNet-
+pretrained EfficientNet encoder backbone -- the counterpart of cropping/'s
+smp.UnetPlusPlus(encoder_name="efficientnet-b4", encoder_weights="imagenet")).
 
-Checkpoints are saved as <name>.pth with a <name>.json config sidecar, so any
-loader can rebuild the exact architecture: seg_fold_<i>.pth / cls_fold_<i>.pth
-under --models_dir, mirroring the cropping/ and informative_frames/ layout.
+Checkpoints are saved as seg_fold_<i>.pth with a <name>.json config sidecar, so
+any loader can rebuild the exact architecture (same naming as cropping/models).
 """
 
 import json
@@ -15,7 +13,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-from monai.networks.nets import UNet, FlexibleUNet, EfficientNetBN
+from monai.networks.nets import UNet, FlexibleUNet
 
 from .configs import PreprocConfig
 
@@ -33,12 +31,6 @@ def build_seg_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
         return FlexibleUNet(in_channels=3, out_channels=1, backbone=cfg.seg_backbone,
                             pretrained=pre, spatial_dims=2)
     raise ValueError(f"unknown seg_arch '{cfg.seg_arch}' (choose 'unet' or 'flexunet')")
-
-
-def build_cls_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
-    pre = cfg.pretrained if pretrained is None else pretrained
-    return EfficientNetBN(model_name=cfg.cls_backbone, pretrained=pre,
-                          spatial_dims=2, in_channels=3, num_classes=1)
 
 
 def save_checkpoint(model: nn.Module, cfg: PreprocConfig, path):
@@ -61,13 +53,6 @@ def load_config_for(path, cfg=None):
 def load_seg_model(path, device, cfg=None) -> nn.Module:
     cfg = load_config_for(path, cfg)
     model = build_seg_model(cfg, pretrained=False)
-    model.load_state_dict(torch.load(path, map_location=device))
-    return model.to(device).eval()
-
-
-def load_cls_model(path, device, cfg=None) -> nn.Module:
-    cfg = load_config_for(path, cfg)
-    model = build_cls_model(cfg, pretrained=False)
     model.load_state_dict(torch.load(path, map_location=device))
     return model.to(device).eval()
 
