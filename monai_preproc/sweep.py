@@ -9,13 +9,14 @@ to <out_dir>/pareto.csv and an overview plot (performance vs cost, Pareto front
 highlighted) to <out_dir>/overview.png.
 
     python -u -m monai_preproc.sweep --out_dir results/monai_sweep [--preset flexunet] \
-        [--shape_loss 100] [--grid my_grid.json] [--epochs 40] [--no-train] [--folds 0 1 2 3 4]
+        [--loss_variant dice_ce] [--grid my_grid.json] [--epochs 40] [--no-train] [--folds 0 1 2 3 4]
     python -u -m monai_preproc.sweep --plot_only results/monai_sweep/sweep_results.csv
 
---shape_loss W additionally runs every config as '<name>_shapeW' trained with
-Dice + W * ellipse shape-prior loss (losses.py), doubling the experiments so old
-vs new loss can be compared in sweep_results.csv / pareto.csv / overview.png;
---only_shape_loss runs only those variants (not the plain configs).
+--loss_variant L additionally runs every config as '<name>_<L>' trained with the
+alternative stock loss (e.g. dice_ce = Dice + BCE), doubling the experiments so
+old vs new loss can be compared in sweep_results.csv / pareto.csv /
+overview.png; --only_loss_variant runs only those variants (not the plain
+configs).
 
 Performance metric: mean micro IoU over the val folds.
 Cost metric: latency_ms per frame at the config's input size (falls back to
@@ -83,9 +84,9 @@ def plot_sweep_overview(df, pareto, out_path):
     for ax, stage in zip(axes[0], stages):
         sub = df[df["stage"] == stage]
         cost = sub["latency_ms"].fillna(sub["params"])
-        colors = ["#DD8452" if "_shape" in c else "#4C72B0" for c in sub["config"]]
+        colors = ["#DD8452" if "_dicece" in c else "#4C72B0" for c in sub["config"]]
         ax.scatter(cost, sub["perf"], s=60 + 10 * sub["params"] / 1e6, c=colors, alpha=0.75,
-                   edgecolor="black", label="config (orange = shape-loss variant)", zorder=3)
+                   edgecolor="black", label="config (orange = dice_ce variant)", zorder=3)
         for idx, r in sub.iterrows():
             ax.annotate(r["config"], (cost[idx], r["perf"]), textcoords="offset points",
                         xytext=(7, 5), fontsize=8)
@@ -109,30 +110,29 @@ def run_sweep(grid, out_dir, folds, epochs=None, train=True,
               ann_csv="cropping/annotations_cropping_2025.csv",
               splits_csv="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv",
               img_dir="cropping/frames_to_annotate_larger",
-              num_workers=4, device=None, seg_shape_weights=(), shape_variants_only=False,
+              num_workers=4, device=None, loss_variants=(), variants_only=False,
               patience=None, log=print):
     """Run every grid config over the folds.
 
-    Each weight in seg_shape_weights adds one variant per config named
-    '<name>_shape<w>' trained with Dice + w * ellipse_shape_loss, so the old and
-    the new loss can be compared in the same sweep (and overview plot).
-    shape_variants_only=True runs only those variants, not the plain configs.
+    Each entry in loss_variants (e.g. "dice_ce") adds one variant per config
+    named '<name>_<loss>' trained with that loss, so the default Dice loss and
+    the alternative can be compared in the same sweep (and overview plot).
+    variants_only=True runs only those variants, not the plain configs.
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "sweep_results.csv"
-    jobs = [] if shape_variants_only else [(name, cfg) for name, cfg in grid.items()]
-    for w in seg_shape_weights:
+    jobs = [] if variants_only else [(name, cfg) for name, cfg in grid.items()]
+    for lv in loss_variants:
         for name, cfg in grid.items():
             v = PreprocConfig.from_dict(cfg.to_dict())
-            v.name = f"{name}_shape{float(w):g}"
-            v.seg_shape_loss_weight = float(w)
+            v.name = f"{name}_{lv}"
+            v.seg_loss = lv
             jobs.append((v.name, v))
     rows = []
     for name, cfg in jobs:
-        shape = f", shape_loss_weight={cfg.seg_shape_loss_weight}" if cfg.seg_shape_loss_weight else ""
-        log(f"=== config {name} (seg: {cfg.seg_arch} @ {cfg.seg_img_size}{shape}) ===")
+        log(f"=== config {name} (seg: {cfg.seg_arch} @ {cfg.seg_img_size}, seg_loss={cfg.seg_loss}) ===")
         seg_models_dir = out_dir / "models" / name / "seg"
         if train:
             for fold in folds:
@@ -171,12 +171,12 @@ def main(argv=None):
     parser.add_argument("--preset", choices=sorted(GRIDS), default="flexunet",
                         help="Named config grid; 'flexunet' (default) is the FlexibleUNet-only architecture search.")
     parser.add_argument("--grid", type=str, default=None, help="JSON file overriding/extending the preset grid.")
-    parser.add_argument("--shape_loss", type=float, default=None, metavar="W",
-                        help="Also run every config as '<name>_shapeW' trained with "
-                             "Dice + W * ellipse shape-prior loss (losses.py); doubles the "
-                             "experiments so old vs new loss can be compared.")
-    parser.add_argument("--only_shape_loss", action="store_true",
-                        help="With --shape_loss W, run only the '<name>_shapeW' variants "
+    parser.add_argument("--loss_variant", choices=["dice_ce"], default=None,
+                        help="Also run every config as '<name>_dicece' trained with Dice + BCE "
+                             "(stock MONAI DiceCELoss), doubling the experiments so the default "
+                             "Dice loss and Dice+CE can be compared.")
+    parser.add_argument("--only_loss_variant", action="store_true",
+                        help="With --loss_variant L, run only the '<name>_<L>' variants "
                              "(skip the plain configs).")
     parser.add_argument("--plot_only", type=str, default=None,
                         help="Skip training/eval: re-render pareto.csv + overview.png from an existing sweep_results.csv.")
@@ -209,13 +209,13 @@ def main(argv=None):
         missing = [n for n in names if n not in grid]
         if missing:
             raise SystemExit(f"unknown config(s) {missing}; available: {sorted(grid)}")
-    if args.only_shape_loss and not args.shape_loss:
-        raise SystemExit("--only_shape_loss requires --shape_loss W")
-    shape_weights = (args.shape_loss,) if args.shape_loss else ()
+    if args.only_loss_variant and not args.loss_variant:
+        raise SystemExit("--only_loss_variant requires --loss_variant L")
+    loss_variants = (args.loss_variant,) if args.loss_variant else ()
     return run_sweep(grid, args.out_dir, args.folds, epochs=args.epochs,
                      train=not args.no_train, ann_csv=args.ann_csv, splits_csv=args.splits_csv,
                      img_dir=args.img_dir, num_workers=args.num_workers,
-                     seg_shape_weights=shape_weights, shape_variants_only=args.only_shape_loss,
+                     loss_variants=loss_variants, variants_only=args.only_loss_variant,
                      patience=args.patience)
 
 

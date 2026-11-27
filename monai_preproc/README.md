@@ -33,7 +33,9 @@ is found.
   plus cost columns (params/flops/latency_ms) in `summary.csv`.
 
 On top of the original, training adds **TensorBoard logging**
-(`<out_dir>/runs/fold_<i>/`; `tensorboard --logdir <out_dir>/runs`), **early
+(`<out_dir>/runs/fold_<i>/`; `tensorboard --logdir <out_dir>/runs`) with the loss
+components logged separately (`train/loss`, `train/loss_dice`, `train/loss_bce`,
+`val/iou`, `best/val_iou`, plus the improvement figure), **early
 stopping** (`patience=3` by default; disable with `PATIENCE=0 sbatch
 scripts/monai_sweep.sh` or `--patience 0`), and a **2×5 visualization saved on every
 new best val IoU** (`<out_dir>/vis/fold<i>_best_epoch<e>.png`: top row = original
@@ -48,7 +50,6 @@ blacked out; also logged to TensorBoard as `val/best_masked`).
 | `transforms.py` | MONAI transform chains (val chain parity-tested against albumentations) |
 | `models.py` | MONAI `UNet` / `FlexibleUNet`; checkpoint + config-sidecar I/O; `measure_cost` (params/FLOPs/latency) |
 | `data.py` | Dataset over the cropping annotation/split CSVs; **missing files are skipped with a warning, never an error** |
-| `losses.py` | `ellipse_shape_loss`: differentiable ellipse shape prior (soft moments of the prediction vs GT mask; for an ellipse the second moments give center + semi-axes) |
 | `train.py` | `python -m monai_preproc.train --config NAME --fold i` — TensorBoard + early stopping + best-IoU checkpoint and 2×5 plot |
 | `evaluate.py` | `python -m monai_preproc.evaluate --config NAME --models_dir ... --out_dir ...` — same outputs as `cropping/eval/` + cost columns |
 | `sweep.py` | `python -m monai_preproc.sweep --out_dir results/monai_sweep` — trains+evaluates every grid config, writes `sweep_results.csv`, `pareto.csv`, `overview.png` |
@@ -103,18 +104,17 @@ Outputs in `--out_dir` (default `results/monai_sweep`):
   best-IoU 2×5 plots (`vis/`)
 - `eval/<config>/seg/` — per-fold eval detail (same CSV/plot format as `cropping/eval/`)
 
-### Shape-prior loss comparison
+### Loss comparison (Dice vs Dice+CE)
 
-The crop target is always an axis-aligned ellipse (the annotation CSV stores
-`center_x/center_y/radius_x/radius_y`), so `losses.py` adds `ellipse_shape_loss`
-— MSE between the soft ellipse parameters of the predicted probability map and
-those of the GT mask. Training uses `Dice + seg_shape_loss_weight *
-ellipse_shape_loss`; weight `0` is exactly the original loss. To compare old vs
-new loss in one sweep: `SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh` — every
-config is additionally run as `<config>_shape100`, shown as separate rows in the
-CSVs and in orange in `overview.png`. To run *only* the shape-loss variants
-(not the plain configs), add `--only_shape_loss` (`ONLY_SHAPE=1` in the shell
-script).
+Only stock losses are used — no custom loss. The default `seg_loss="dice"` is
+exactly the original pipeline's loss; `seg_loss="dice_ce"` adds plain BCE on top
+(the stock MONAI `DiceCELoss` combination), which helps because most pixels are
+background. To compare in one sweep: `LOSS_VARIANT=dice_ce sbatch
+scripts/monai_sweep.sh` — every config is additionally run as `<config>_dicece`,
+shown as separate rows in the CSVs and in orange in `overview.png`. To run *only*
+the variants, add `ONLY_VARIANT=1`. In TensorBoard both components are logged
+separately (`train/loss_dice`, `train/loss_bce`, plus the total `train/loss`), so
+the two losses can be inspected independently per run.
 
 Extend or override a grid with a JSON file:
 `python -m monai_preproc.sweep --grid my_grid.json`, where the file is
@@ -130,5 +130,5 @@ python -m pytest tests/test_monai_preproc.py -q
 
 Covers val-transform parity with the albumentations chain, model forward + cost,
 checkpoint roundtrip, end-to-end seg train (TensorBoard events, early stopping,
-best-IoU plot) + eval on synthetic frames, the ellipse shape loss, and the sweep
-(CSV/pareto/overview outputs, shape-loss variants, `--plot_only`).
+best-IoU plot, separate loss-component logging) + eval on synthetic frames, and
+the sweep (CSV/pareto/overview outputs, loss variants, `--plot_only`).

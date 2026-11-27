@@ -25,13 +25,13 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from monai.losses import DiceLoss
 
 from .configs import GRIDS, load_grid
 from .data import MonaiFundusDataset, load_seg_fold
-from .losses import ellipse_shape_loss
 from .models import build_seg_model, save_checkpoint
 from .transforms import seg_train_transforms, seg_val_transforms, IMAGENET_MEAN, IMAGENET_STD
 
@@ -113,12 +113,18 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers,
                             pin_memory=pin)
     log(f"fold={fold}: {len(train_ds)} train / {len(val_ds)} val frames "
-        f"(img_size={cfg.seg_img_size}, arch={cfg.seg_arch}, shape_loss_weight={cfg.seg_shape_loss_weight})")
+        f"(img_size={cfg.seg_img_size}, arch={cfg.seg_arch}, seg_loss={cfg.seg_loss})")
 
     model = build_seg_model(cfg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    # same form as smp.losses.DiceLoss(BINARY_MODE, from_logits=True) in cropping/train_segmentation.py
-    loss_fn = DiceLoss(sigmoid=True, smooth_nr=1.0, smooth_dr=1.0)
+    # "dice": same form as smp.losses.DiceLoss(BINARY_MODE, from_logits=True) in
+    # cropping/train_segmentation.py; "dice_ce": additionally plain BCE (the stock
+    # MONAI DiceCELoss combination). Both components are logged separately to TB.
+    if cfg.seg_loss not in ("dice", "dice_ce"):
+        raise ValueError(f"unknown seg_loss '{cfg.seg_loss}' (choose 'dice' or 'dice_ce')")
+    dice_fn = DiceLoss(sigmoid=True, smooth_nr=1.0, smooth_dr=1.0)
+    ce_fn = nn.BCEWithLogitsLoss()
+    use_ce = cfg.seg_loss == "dice_ce"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
 
     writer = SummaryWriter(log_dir=str(out_dir / "runs" / f"fold_{fold}"))
@@ -126,20 +132,22 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
     best_iou, best_epoch, since_best, history = -1.0, -1, 0, []
     for epoch in range(epochs):
         model.train()
-        losses = []
+        losses, dice_losses, bce_losses = [], [], []
         for batch in train_loader:
             imgs = batch["image"].to(device)
             masks = batch["mask"].to(device)
             optimizer.zero_grad()
             with torch.autocast(device_type="cuda", enabled=use_amp):
                 logits = model(imgs)
-                loss = loss_fn(logits, masks)
-                if cfg.seg_shape_loss_weight > 0:
-                    loss = loss + cfg.seg_shape_loss_weight * ellipse_shape_loss(logits, masks)
+                loss_dice = dice_fn(logits, masks)
+                loss_bce = ce_fn(logits, masks)
+                loss = loss_dice + loss_bce if use_ce else loss_dice
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             losses.append(loss.item())
+            dice_losses.append(float(loss_dice))
+            bce_losses.append(float(loss_bce))
 
         model.eval()
         tp = fp = fn = tn = 0
@@ -152,10 +160,16 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
                 tp += t.sum().item(); fp += f.sum().item(); fn += n.sum().item(); tn += nn_.sum().item()
         iou = tp / (tp + fp + fn + 1e-7)
         mean_loss = float(np.mean(losses))
-        history.append({"epoch": epoch, "train_loss": mean_loss, "val_iou": float(iou)})
+        mean_dice = float(np.mean(dice_losses))
+        mean_bce = float(np.mean(bce_losses))
+        history.append({"epoch": epoch, "train_loss": mean_loss, "train_loss_dice": mean_dice,
+                        "train_loss_bce": mean_bce, "val_iou": float(iou)})
         writer.add_scalar("train/loss", mean_loss, epoch)
+        writer.add_scalar("train/loss_dice", mean_dice, epoch)
+        writer.add_scalar("train/loss_bce", mean_bce, epoch)
         writer.add_scalar("val/iou", float(iou), epoch)
-        log(f"fold {fold} epoch {epoch + 1}/{epochs} | train loss {mean_loss:.4f} | val IoU {iou:.4f}")
+        log(f"fold {fold} epoch {epoch + 1}/{epochs} | train loss {mean_loss:.4f} "
+            f"(dice {mean_dice:.4f}, bce {mean_bce:.4f}) | val IoU {iou:.4f}")
 
         if iou > best_iou:
             best_iou, best_epoch, since_best = float(iou), epoch, 0

@@ -12,7 +12,7 @@
 # Writes $OUT_DIR/<config>_fold<i>_val.png + _val_metrics.csv.
 #
 # Usage: sbatch scripts/monai_vis_seg.sh
-#        CONFIG=flexunet_b0_256_shape100 FOLDS="0 1" N_IMAGES=6 sbatch scripts/monai_vis_seg.sh
+#        CONFIG=flexunet_b0_256_dicece FOLDS="0 1" N_IMAGES=6 sbatch scripts/monai_vis_seg.sh
 #        MODELS_ROOT=results/monai_sweep_b0 OUT_DIR=results/monai_sweep_b0/vis sbatch scripts/monai_vis_seg.sh
 
 set -e

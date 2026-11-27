@@ -16,9 +16,9 @@
 #
 # Usage: sbatch scripts/monai_sweep.sh                        # flexunet grid
 #        ONLY="flexunet_b0_384,flexunet_b1_512" EPOCHS=10 sbatch scripts/monai_sweep.sh
-#        SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh         # also run '<name>_shape100'
-#                                                             # (Dice + 100*ellipse loss)
-#        SHAPE_LOSS=100 ONLY_SHAPE=1 sbatch scripts/monai_sweep.sh   # only the '_shape100' variants
+#        LOSS_VARIANT=dice_ce sbatch scripts/monai_sweep.sh       # also run '<name>_dicece'
+#                                                             # (Dice + BCE)
+#        LOSS_VARIANT=dice_ce ONLY_VARIANT=1 sbatch scripts/monai_sweep.sh   # only '_dicece' variants
 #        NO_TRAIN=1 sbatch scripts/monai_sweep.sh             # re-evaluate existing checkpoints only
 #        PATIENCE=0 sbatch scripts/monai_sweep.sh             # disable early stopping (default: 3)
 #        PRESET=default sbatch scripts/monai_sweep.sh         # original mixed UNet/FlexibleUNet grid
@@ -33,8 +33,8 @@ export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
 OUT_DIR=${OUT_DIR:-results/monai_sweep}
 PRESET=${PRESET:-flexunet}
-SHAPE_LOSS=${SHAPE_LOSS:-}
-ONLY_SHAPE=${ONLY_SHAPE:-}
+LOSS_VARIANT=${LOSS_VARIANT:-}
+ONLY_VARIANT=${ONLY_VARIANT:-}
 GRID_JSON=${GRID_JSON:-}
 ONLY=${ONLY:-}
 EPOCHS=${EPOCHS:-40}
@@ -45,8 +45,8 @@ CMD=(python -u -m monai_preproc.sweep --out_dir "$OUT_DIR" --num_workers "$NUM_W
      --preset "$PRESET" --epochs "$EPOCHS")
 if [ -n "$PATIENCE" ]; then CMD+=(--patience "$PATIENCE"); fi
 if [ -n "$GRID_JSON" ]; then CMD+=(--grid "$GRID_JSON"); fi
-if [ -n "$SHAPE_LOSS" ]; then CMD+=(--shape_loss "$SHAPE_LOSS"); fi
-if [ "$ONLY_SHAPE" = "1" ]; then CMD+=(--only_shape_loss); fi
+if [ -n "$LOSS_VARIANT" ]; then CMD+=(--loss_variant "$LOSS_VARIANT"); fi
+if [ "$ONLY_VARIANT" = "1" ]; then CMD+=(--only_loss_variant); fi
 if [ -n "$ONLY" ]; then CMD+=(--only "$ONLY"); fi
 if [ "$NO_TRAIN" = "1" ]; then CMD+=(--no-train); fi
 

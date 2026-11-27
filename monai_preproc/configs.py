@@ -5,8 +5,8 @@ classifier is a separate pipeline and is re-added later):
   arch: "unet" (MONAI UNet, configurable channels/strides) or "flexunet"
         (MONAI FlexibleUNet with an ImageNet-pretrained EfficientNet encoder --
         the MONAI counterpart of cropping/'s smp.UnetPlusPlus(EfficientNet-B4))
-  seg_shape_loss_weight: weight of the ellipse shape-prior loss on top of the
-        Dice loss (0.0 = plain Dice, exactly like cropping/train_segmentation.py)
+  seg_loss: "dice" (default, same as cropping/train_segmentation.py) or
+        "dice_ce" (Dice + plain BCE -- the stock MONAI DiceCELoss combination)
 
 Training hyperparameters mirror cropping/train_segmentation.py (the original
 UNet++ pipeline): Adam(lr=1e-4), batch_size=4, epochs=40, Dice loss from logits,
@@ -34,7 +34,7 @@ class PreprocConfig:
     seg_channels: tuple = (32, 64, 128, 256, 512)
     seg_strides: tuple = (2, 2, 2, 2)
     seg_img_size: int = 768
-    seg_shape_loss_weight: float = 0.0
+    seg_loss: str = "dice"
     batch_size: int = 4
     lr: float = 1e-4
     epochs: int = 40

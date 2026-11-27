@@ -30,10 +30,28 @@ from torch.utils.data import DataLoader
 
 from .configs import load_grid, GRIDS
 from .data import MonaiFundusDataset, load_seg_fold
-from .losses import ellipse_moments
 from .models import find_fold_checkpoint, load_seg_model
 from .transforms import seg_val_transforms, IMAGENET_MEAN, IMAGENET_STD
 from .train import binary_counts
+
+
+def ellipse_moments(prob, eps=1e-6):
+    """Soft ellipse parameters of a map prob (B, 1, H, W) on a normalized [0, 1]
+    coordinate grid. Returns (B, 4) rows (cx, cy, a, b): centroid and equivalent
+    axis-aligned ellipse semi-axes a = 2*sqrt(var_x), b = 2*sqrt(var_y). Used only
+    to draw the fitted ellipse of a prediction in the figure."""
+    b, _, h, w = prob.shape
+    ys = torch.linspace(0.0, 1.0, h, device=prob.device, dtype=prob.dtype).view(1, h, 1)
+    xs = torch.linspace(0.0, 1.0, w, device=prob.device, dtype=prob.dtype).view(1, 1, w)
+    p = prob[:, 0]
+    m00 = p.sum(dim=(1, 2)) + eps
+    cx = (p * xs).sum(dim=(1, 2)) / m00
+    cy = (p * ys).sum(dim=(1, 2)) / m00
+    var_x = (p * (xs - cx.view(b, 1, 1)) ** 2).sum(dim=(1, 2)) / m00
+    var_y = (p * (ys - cy.view(b, 1, 1)) ** 2).sum(dim=(1, 2)) / m00
+    a = 2.0 * torch.sqrt(var_x.clamp_min(eps))
+    bb = 2.0 * torch.sqrt(var_y.clamp_min(eps))
+    return torch.stack([cx, cy, a, bb], dim=1)
 
 
 def denorm_image(img_chw):
@@ -121,7 +139,7 @@ def vis_seg_fold(cfg, fold, models_dir, ann_csv, splits_csv, img_dir, out_dir, n
             ax.set_title(title, fontsize=9)
             ax.axis("off")
     fig.suptitle(f"{cfg.name} | fold {fold} val | checkpoint {ckpt.name} | "
-                 f"seg_shape_loss_weight={cfg.seg_shape_loss_weight}")
+                 f"seg_loss={cfg.seg_loss}")
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     png_path = out_dir / f"{cfg.name}_fold{fold}_val.png"
     fig.savefig(png_path, dpi=150)
@@ -140,7 +158,7 @@ def vis_seg_fold(cfg, fold, models_dir, ann_csv, splits_csv, img_dir, out_dir, n
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", type=str, required=True, help="Grid config name, e.g. flexunet_b0_256_shape100.")
+    parser.add_argument("--config", type=str, required=True, help="Grid config name, e.g. flexunet_b0_256_dicece.")
     parser.add_argument("--preset", choices=sorted(GRIDS), default="flexunet")
     parser.add_argument("--grid", type=str, default=None, help="JSON file overriding/extending the preset grid.")
     parser.add_argument("--models_root", type=str, default="results/monai_sweep/models",
