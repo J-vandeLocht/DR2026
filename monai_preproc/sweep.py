@@ -14,7 +14,8 @@ highlighted) to <out_dir>/overview.png.
 
 --shape_loss W additionally runs every config as '<name>_shapeW' trained with
 Dice + W * ellipse shape-prior loss (losses.py), doubling the experiments so old
-vs new loss can be compared in sweep_results.csv / pareto.csv / overview.png.
+vs new loss can be compared in sweep_results.csv / pareto.csv / overview.png;
+--only_shape_loss runs only those variants (not the plain configs).
 
 Performance metric: mean micro IoU over the val folds.
 Cost metric: latency_ms per frame at the config's input size (falls back to
@@ -108,18 +109,20 @@ def run_sweep(grid, out_dir, folds, epochs=None, train=True,
               ann_csv="cropping/annotations_cropping_2025.csv",
               splits_csv="cropping/split_cropping_5fold_paxos2025_from_q5v3.csv",
               img_dir="cropping/frames_to_annotate_larger",
-              num_workers=4, device=None, seg_shape_weights=(), log=print):
+              num_workers=4, device=None, seg_shape_weights=(), shape_variants_only=False,
+              log=print):
     """Run every grid config over the folds.
 
     Each weight in seg_shape_weights adds one variant per config named
     '<name>_shape<w>' trained with Dice + w * ellipse_shape_loss, so the old and
     the new loss can be compared in the same sweep (and overview plot).
+    shape_variants_only=True runs only those variants, not the plain configs.
     """
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     results_path = out_dir / "sweep_results.csv"
-    jobs = [(name, cfg) for name, cfg in grid.items()]
+    jobs = [] if shape_variants_only else [(name, cfg) for name, cfg in grid.items()]
     for w in seg_shape_weights:
         for name, cfg in grid.items():
             v = PreprocConfig.from_dict(cfg.to_dict())
@@ -171,6 +174,9 @@ def main(argv=None):
                         help="Also run every config as '<name>_shapeW' trained with "
                              "Dice + W * ellipse shape-prior loss (losses.py); doubles the "
                              "experiments so old vs new loss can be compared.")
+    parser.add_argument("--only_shape_loss", action="store_true",
+                        help="With --shape_loss W, run only the '<name>_shapeW' variants "
+                             "(skip the plain configs).")
     parser.add_argument("--plot_only", type=str, default=None,
                         help="Skip training/eval: re-render pareto.csv + overview.png from an existing sweep_results.csv.")
     parser.add_argument("--only", type=str, default=None, help="Comma-separated config names to run.")
@@ -200,11 +206,13 @@ def main(argv=None):
         missing = [n for n in names if n not in grid]
         if missing:
             raise SystemExit(f"unknown config(s) {missing}; available: {sorted(grid)}")
+    if args.only_shape_loss and not args.shape_loss:
+        raise SystemExit("--only_shape_loss requires --shape_loss W")
     shape_weights = (args.shape_loss,) if args.shape_loss else ()
     return run_sweep(grid, args.out_dir, args.folds, epochs=args.epochs,
                      train=not args.no_train, ann_csv=args.ann_csv, splits_csv=args.splits_csv,
                      img_dir=args.img_dir, num_workers=args.num_workers,
-                     seg_shape_weights=shape_weights)
+                     seg_shape_weights=shape_weights, shape_variants_only=args.only_shape_loss)
 
 
 if __name__ == "__main__":

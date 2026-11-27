@@ -229,6 +229,19 @@ def test_sweep_shape_loss_adds_variants(tmp_path):
     assert (out_dir / "overview.png").exists()
 
 
+def test_sweep_shape_variants_only(tmp_path):
+    from monai_preproc.sweep import run_sweep
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    grid = {"tiny": tiny_cfg()}
+    out_dir = tmp_path / "sweep"
+    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
+                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
+                   num_workers=0, device=torch.device("cpu"), seg_shape_weights=(100.0,),
+                   shape_variants_only=True, log=lambda *a: None)
+    assert set(df["config"]) == {"tiny_shape100"}
+    assert not (out_dir / "models" / "tiny").exists()
+
+
 def test_sweep_plot_only_rerenders_outputs(tmp_path):
     from monai_preproc.sweep import main as sweep_main
     df = pd.DataFrame([

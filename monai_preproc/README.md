@@ -111,7 +111,9 @@ those of the GT mask. Training uses `Dice + seg_shape_loss_weight *
 ellipse_shape_loss`; weight `0` is exactly the original loss. To compare old vs
 new loss in one sweep: `SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh` — every
 config is additionally run as `<config>_shape100`, shown as separate rows in the
-CSVs and in orange in `overview.png`.
+CSVs and in orange in `overview.png`. To run *only* the shape-loss variants
+(not the plain configs), add `--only_shape_loss` (`ONLY_SHAPE=1` in the shell
+script).
 
 Extend or override a grid with a JSON file:
 `python -m monai_preproc.sweep --grid my_grid.json`, where the file is

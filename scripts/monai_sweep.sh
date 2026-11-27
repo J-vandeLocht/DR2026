@@ -18,6 +18,7 @@
 #        ONLY="flexunet_b0_384,flexunet_b1_512" EPOCHS=10 sbatch scripts/monai_sweep.sh
 #        SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh         # also run '<name>_shape100'
 #                                                             # (Dice + 100*ellipse loss)
+#        SHAPE_LOSS=100 ONLY_SHAPE=1 sbatch scripts/monai_sweep.sh   # only the '_shape100' variants
 #        NO_TRAIN=1 sbatch scripts/monai_sweep.sh             # re-evaluate existing checkpoints only
 #        PRESET=default sbatch scripts/monai_sweep.sh         # original mixed UNet/FlexibleUNet grid
 # Re-render pareto.csv + overview.png from an existing CSV without training:
@@ -32,6 +33,7 @@ export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 OUT_DIR=${OUT_DIR:-results/monai_sweep}
 PRESET=${PRESET:-flexunet}
 SHAPE_LOSS=${SHAPE_LOSS:-}
+ONLY_SHAPE=${ONLY_SHAPE:-}
 GRID_JSON=${GRID_JSON:-}
 ONLY=${ONLY:-}
 EPOCHS=${EPOCHS:-40}
@@ -41,6 +43,7 @@ CMD=(python -u -m monai_preproc.sweep --out_dir "$OUT_DIR" --num_workers "$NUM_W
      --preset "$PRESET" --epochs "$EPOCHS")
 if [ -n "$GRID_JSON" ]; then CMD+=(--grid "$GRID_JSON"); fi
 if [ -n "$SHAPE_LOSS" ]; then CMD+=(--shape_loss "$SHAPE_LOSS"); fi
+if [ "$ONLY_SHAPE" = "1" ]; then CMD+=(--only_shape_loss); fi
 if [ -n "$ONLY" ]; then CMD+=(--only "$ONLY"); fi
 if [ "$NO_TRAIN" = "1" ]; then CMD+=(--no-train); fi
 
