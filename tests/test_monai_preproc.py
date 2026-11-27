@@ -146,6 +146,18 @@ def test_train_seg_early_stopping(tmp_path, monkeypatch):
     assert Path(res["model"]).exists()
 
 
+def test_train_seg_early_stopping_disabled_with_patience_0(tmp_path, monkeypatch):
+    import monai_preproc.train as train_mod
+    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
+    monkeypatch.setattr(train_mod, "binary_counts",
+                        lambda pred, target: tuple(torch.zeros(pred.shape[0], dtype=torch.long) for _ in range(4)))
+    cfg = tiny_cfg()
+    res = train_mod.train_seg(cfg, 0, str(ann_csv), str(splits_csv), str(img_dir), str(tmp_path / "m"),
+                              epochs=5, patience=0, num_workers=0, device=torch.device("cpu"),
+                              log=lambda *a: None)
+    assert res["epochs_run"] == 5  # patience=0 disables early stopping
+
+
 def test_vis_seg_fold_writes_png_and_csv(tmp_path):
     from monai_preproc.vis_seg import vis_seg_fold
     cfg = tiny_cfg()

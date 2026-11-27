@@ -167,7 +167,7 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
             log(f"   -> new best val IoU {best_iou:.4f}: saved {model_path.name} and {vis_path.name}")
         else:
             since_best += 1
-            if since_best >= patience:
+            if patience > 0 and since_best >= patience:
                 log(f"   -> early stopping: val IoU did not improve for {patience} epochs")
                 break
     writer.close()
@@ -186,7 +186,8 @@ def main(argv=None):
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
-    parser.add_argument("--patience", type=int, default=None, help="Early stopping patience (default: config, 3).")
+    parser.add_argument("--patience", type=int, default=None,
+                        help="Early stopping patience; 0 disables (default: config value, 3).")
     parser.add_argument("--amp", action="store_true", help="Mixed precision (autocast + GradScaler), like cropping/.")
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)

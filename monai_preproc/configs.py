@@ -10,8 +10,8 @@ classifier is a separate pipeline and is re-added later):
 
 Training hyperparameters mirror cropping/train_segmentation.py (the original
 UNet++ pipeline): Adam(lr=1e-4), batch_size=4, epochs=40, Dice loss from logits,
-best-val-micro-IoU checkpoint seg_fold_<fold>.pth; early stopping (patience=3)
-and TensorBoard logging are added on top in train.py.
+best-val-micro-IoU checkpoint seg_fold_<fold>.pth; early stopping (patience=3,
+0 disables) and TensorBoard logging are added on top in train.py.
 
 DEFAULT_GRID is the original mixed grid (UNet vs FlexibleUNet comparison).
 FLEXUNET_GRID is the FlexibleUNet-only architecture search used by
