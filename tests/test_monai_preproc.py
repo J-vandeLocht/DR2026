@@ -43,6 +43,7 @@ def test_grid_loads(tmp_path):
     assert "unet_tiny_256" in grid2
     arch = load_grid(None, preset="arch")
     assert set(arch) == set(ARCH_GRID)
+    assert len(arch) == 26  # 13 backbone x size combos per arch
     assert {c.seg_arch for c in arch.values()} == {"flexunet", "unetpp"}
     assert all(c.pretrained for c in arch.values())  # everything ImageNet-pretrained
 
