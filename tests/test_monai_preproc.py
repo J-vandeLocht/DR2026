@@ -12,12 +12,11 @@ import numpy as np
 import pandas as pd
 import torch
 
-from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, FLEXUNET_GRID, load_grid
+from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, ARCH_GRID, load_grid
 from monai_preproc.transforms import seg_val_transforms
 from monai_preproc.models import build_seg_model, save_checkpoint, load_seg_model, measure_cost
 from monai_preproc.train import train_seg
 from monai_preproc.evaluate import evaluate_seg
-from monai_preproc.losses import ellipse_moments, ellipse_shape_loss
 from monai_preproc.sweep import pareto_front, pareto_per_stage
 from cropping.segmentation_pipeline import get_transforms as albu_get_transforms
 
@@ -42,10 +41,11 @@ def test_grid_loads(tmp_path):
     grid2 = load_grid(str(override))
     assert grid2["custom"].seg_img_size == 256
     assert "unet_tiny_256" in grid2
-    flex = load_grid(None, preset="flexunet")
-    assert set(flex) == set(FLEXUNET_GRID)
-    assert all(c.seg_arch == "flexunet" for c in flex.values())
-    assert all(c.pretrained for c in flex.values())
+    arch = load_grid(None, preset="arch")
+    assert set(arch) == set(ARCH_GRID)
+    assert len(arch) == 32  # 4 backbones x 4 sizes per arch
+    assert {c.seg_arch for c in arch.values()} == {"flexunet", "unetpp"}
+    assert all(c.pretrained for c in arch.values())  # everything ImageNet-pretrained
 
 
 def test_grid_unet_strides_match_channels():
@@ -78,6 +78,12 @@ def test_models_forward_and_cost():
         assert seg(x).shape == (2, 1, 64, 64)
     cost = measure_cost(seg, 64, torch.device("cpu"))
     assert cost["params"] > 0 and cost["latency_ms"] > 0 and cost["img_size"] == 64
+    # UNet++ arch (smp.UnetPlusPlus, pretrained=False for the test -> random weights)
+    cfg_pp = PreprocConfig(name="tiny_pp", seg_arch="unetpp", seg_backbone="efficientnet-b0",
+                           seg_img_size=64, batch_size=2, epochs=1, pretrained=False)
+    seg_pp = build_seg_model(cfg_pp, pretrained=False)
+    with torch.no_grad():
+        assert seg_pp(x).shape == (2, 1, 64, 64)
 
 
 def test_checkpoint_roundtrip_with_sidecar(tmp_path):
@@ -194,23 +200,6 @@ def test_pareto_per_stage_keeps_full_frame_rows():
     assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}
 
 
-def test_ellipse_moments_recover_ellipse_and_shape_loss_gradients():
-    mask = np.zeros((1, 1, 64, 64), dtype=np.float32)
-    cv2.ellipse(mask[0, 0], (32, 32), (16, 16), 0, 0, 360, 1.0, -1)
-    m = ellipse_moments(torch.from_numpy(mask))
-    assert m.shape == (1, 4)
-    # normalized coords: pixel 32 -> 32/63, semi-axis 16 px -> 16/63 (a = 2*sqrt(var) = semi-axis)
-    assert torch.allclose(m[0], torch.tensor([32 / 63, 32 / 63, 16 / 63, 16 / 63]), atol=0.02)
-    logits = (torch.from_numpy(mask) - 0.5) * 20.0
-    assert ellipse_shape_loss(logits, torch.from_numpy(mask)).item() < 1e-3  # perfect pred -> ~0
-    shifted = np.zeros_like(mask)
-    cv2.ellipse(shifted[0, 0], (40, 32), (16, 16), 0, 0, 360, 1.0, -1)
-    assert ellipse_shape_loss(logits, torch.from_numpy(shifted)).item() > 1e-3  # wrong center -> >0
-    logits = logits.clone().requires_grad_(True)
-    ellipse_shape_loss(logits, torch.from_numpy(shifted)).backward()
-    assert logits.grad is not None and logits.grad.abs().sum() > 0
-
-
 def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     from monai_preproc.sweep import run_sweep
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
@@ -226,32 +215,7 @@ def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     assert (out_dir / "models" / "tiny" / "seg" / "seg_fold_0.pth").exists()
 
 
-def test_sweep_shape_loss_adds_variants(tmp_path):
-    from monai_preproc.sweep import run_sweep
-    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
-    out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
-                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                   num_workers=0, device=torch.device("cpu"), seg_shape_weights=(100.0,),
-                   log=lambda *a: None)
-    assert set(df["config"]) == {"tiny", "tiny_shape100"}
-    assert set(df["stage"]) == {"seg"}
-    assert (out_dir / "models" / "tiny_shape100" / "seg" / "seg_fold_0.pth").exists()
-    assert (out_dir / "overview.png").exists()
 
-
-def test_sweep_shape_variants_only(tmp_path):
-    from monai_preproc.sweep import run_sweep
-    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = {"tiny": tiny_cfg()}
-    out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
-                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                   num_workers=0, device=torch.device("cpu"), seg_shape_weights=(100.0,),
-                   shape_variants_only=True, log=lambda *a: None)
-    assert set(df["config"]) == {"tiny_shape100"}
-    assert not (out_dir / "models" / "tiny").exists()
 
 
 def test_sweep_plot_only_rerenders_outputs(tmp_path):

@@ -31,7 +31,6 @@ from monai.losses import DiceLoss
 
 from .configs import GRIDS, load_grid
 from .data import MonaiFundusDataset, load_seg_fold
-from .losses import ellipse_shape_loss
 from .models import build_seg_model, save_checkpoint
 from .transforms import seg_train_transforms, seg_val_transforms, IMAGENET_MEAN, IMAGENET_STD
 
@@ -113,7 +112,7 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers,
                             pin_memory=pin)
     log(f"fold={fold}: {len(train_ds)} train / {len(val_ds)} val frames "
-        f"(img_size={cfg.seg_img_size}, arch={cfg.seg_arch}, shape_loss_weight={cfg.seg_shape_loss_weight})")
+        f"(img_size={cfg.seg_img_size}, arch={cfg.seg_arch}, pretrained={cfg.pretrained})")
 
     model = build_seg_model(cfg).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -132,10 +131,7 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
             masks = batch["mask"].to(device)
             optimizer.zero_grad()
             with torch.autocast(device_type="cuda", enabled=use_amp):
-                logits = model(imgs)
-                loss = loss_fn(logits, masks)
-                if cfg.seg_shape_loss_weight > 0:
-                    loss = loss + cfg.seg_shape_loss_weight * ellipse_shape_loss(logits, masks)
+                loss = loss_fn(model(imgs), masks)
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
@@ -180,7 +176,7 @@ def train_seg(cfg, fold, ann_csv, splits_csv, img_dir, out_dir, epochs=None, bat
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=str, default=None, help="Name from the grid (default: first grid entry).")
-    parser.add_argument("--preset", choices=sorted(GRIDS), default="flexunet", help="Named grid to take --config from.")
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="arch", help="Named grid to take --config from.")
     parser.add_argument("--grid", type=str, default=None, help="Optional JSON file overriding/extending the grid.")
     parser.add_argument("--fold", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=None)
