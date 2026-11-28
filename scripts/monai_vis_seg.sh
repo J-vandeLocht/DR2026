@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --partition=A40medium
+#SBATCH --partition=A40devel
 #SBATCH --time=01:00:00
 #SBATCH --gpus=1
 #SBATCH --ntasks=1
@@ -12,7 +12,7 @@
 # Writes $OUT_DIR/<config>_fold<i>_val.png + _val_metrics.csv.
 #
 # Usage: sbatch scripts/monai_vis_seg.sh
-#        CONFIG=flexunet_b0_256_shape100 FOLDS="0 1" N_IMAGES=6 sbatch scripts/monai_vis_seg.sh
+#        CONFIG=unetpp_b1_512 FOLDS="0 1" N_IMAGES=6 sbatch scripts/monai_vis_seg.sh
 #        MODELS_ROOT=results/monai_sweep_b0 OUT_DIR=results/monai_sweep_b0/vis sbatch scripts/monai_vis_seg.sh
 
 set -e
@@ -21,8 +21,8 @@ conda activate job_new
 cd "${SLURM_SUBMIT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 
-CONFIG=${CONFIG:-flexunet_b0_256}
-PRESET=${PRESET:-flexunet}
+CONFIG=${CONFIG:-unet_b0_256}
+PRESET=${PRESET:-arch}
 FOLDS=${FOLDS:-0}
 N_IMAGES=${N_IMAGES:-4}
 MODELS_ROOT=${MODELS_ROOT:-results/monai_sweep/models}

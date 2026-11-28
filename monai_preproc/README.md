@@ -14,9 +14,11 @@ is found.
 
 ## How it mirrors the original UNet++ pipeline
 
-- Model: `FlexibleUNet` with an ImageNet-pretrained EfficientNet backbone
-  (`flexunet_b4_768` matches `smp.UnetPlusPlus(efficientnet-b4, imagenet)` @768),
-  or a plain MONAI `UNet` (`unet_*` configs).
+- Model: UNet-style `FlexibleUNet` (`seg_arch="flexunet"`) or UNet++
+  (`seg_arch="unetpp"` = `smp.UnetPlusPlus`), both with an ImageNet-pretrained
+  EfficientNet backbone (`unetpp_b4_768` is exactly cropping/'s model @768).
+  Everything in the sweep grid is pretrained — from-scratch training does not
+  make sense for this task.
 - Training (`train.py`): Adam(lr=1e-4), batch_size=4, epochs=40, Dice loss from
   logits with smooth=1.0 — the same form as `smp.losses.DiceLoss(BINARY_MODE,
   from_logits=True)`; optional AMP (`--amp`); seed 42; best-val-micro-IoU
@@ -33,7 +35,8 @@ is found.
   plus cost columns (params/flops/latency_ms) in `summary.csv`.
 
 On top of the original, training adds **TensorBoard logging**
-(`<out_dir>/runs/fold_<i>/`; `tensorboard --logdir <out_dir>/runs`), **early
+(`<out_dir>/runs/fold_<i>/`; `tensorboard --logdir <out_dir>/runs`) logging
+`train/loss`, `val/iou`, `best/val_iou` and the improvement figure, **early
 stopping** (`patience=3` by default; disable with `PATIENCE=0 sbatch
 scripts/monai_sweep.sh` or `--patience 0`), and a **2×5 visualization saved on every
 new best val IoU** (`<out_dir>/vis/fold<i>_best_epoch<e>.png`: top row = original
@@ -44,11 +47,10 @@ blacked out; also logged to TensorBoard as `val/best_masked`).
 
 | File | Purpose |
 |---|---|
-| `configs.py` | `PreprocConfig` + named grids (`DEFAULT_GRID`, `FLEXUNET_GRID`) for the cost/performance sweep |
+| `configs.py` | `PreprocConfig` + named grids (`DEFAULT_GRID`, `ARCH_GRID`) for the cost/performance sweep |
 | `transforms.py` | MONAI transform chains (val chain parity-tested against albumentations) |
 | `models.py` | MONAI `UNet` / `FlexibleUNet`; checkpoint + config-sidecar I/O; `measure_cost` (params/FLOPs/latency) |
 | `data.py` | Dataset over the cropping annotation/split CSVs; **missing files are skipped with a warning, never an error** |
-| `losses.py` | `ellipse_shape_loss`: differentiable ellipse shape prior (soft moments of the prediction vs GT mask; for an ellipse the second moments give center + semi-axes) |
 | `train.py` | `python -m monai_preproc.train --config NAME --fold i` — TensorBoard + early stopping + best-IoU checkpoint and 2×5 plot |
 | `evaluate.py` | `python -m monai_preproc.evaluate --config NAME --models_dir ... --out_dir ...` — same outputs as `cropping/eval/` + cost columns |
 | `sweep.py` | `python -m monai_preproc.sweep --out_dir results/monai_sweep` — trains+evaluates every grid config, writes `sweep_results.csv`, `pareto.csv`, `overview.png` |
@@ -63,15 +65,15 @@ Shell entry points (additive): `scripts/monai_sweep.sh` (sweep) and
 pip install monai tensorboard   # plus the repo's existing env job_new
 
 # train one config, one fold (TensorBoard logs under monai_preproc/models/seg/runs/)
-python -u -m monai_preproc.train --config flexunet_b4_768 --fold 0 --amp
+python -u -m monai_preproc.train --config unetpp_b4_768 --fold 0 --amp
 tensorboard --logdir monai_preproc/models/seg/runs
 
 # evaluate it (same output files as cropping/eval/)
-python -u -m monai_preproc.evaluate --config flexunet_b4_768 \
-  --models_dir monai_preproc/models/seg --out_dir monai_preproc/eval/flexunet_b4_768
+python -u -m monai_preproc.evaluate --config unetpp_b4_768 \
+  --models_dir monai_preproc/models/seg --out_dir monai_preproc/eval/unetpp_b4_768
 
 # inspect val predictions of a swept config
-sbatch scripts/monai_vis_seg.sh    # CONFIG=flexunet_b0_256 FOLDS="0 1" N_IMAGES=6 sbatch ...
+sbatch scripts/monai_vis_seg.sh    # CONFIG=unet_b0_256 FOLDS="0 1" N_IMAGES=6 sbatch ...
 
 # cost/performance sweep over the FlexibleUNet grid
 sbatch scripts/monai_sweep.sh      # or: python -u -m monai_preproc.sweep --out_dir results/monai_sweep
@@ -80,16 +82,20 @@ sbatch scripts/monai_sweep.sh      # or: python -u -m monai_preproc.sweep --out_
 ## Cost/performance sweep
 
 Two named grids live in `configs.py` (`GRIDS`): `default` (`DEFAULT_GRID`, the
-original mixed UNet-vs-FlexibleUNet comparison) and `flexunet` (`FLEXUNET_GRID`,
-the default of `monai_preproc.sweep` / `scripts/monai_sweep.sh`: FlexibleUNet
-with EfficientNet-B0…B4 backbones at 256–768 input — the only backbones with
-ImageNet weights in 2D; the first sweep showed plain UNet encoders cannot match
-them on the fundus crop mask). All grid configs use ImageNet-pretrained
-backbones (`pretrained=True`), matching the old pipeline's
-`encoder_weights="imagenet"`; checkpoints are always *loaded* with
+original mixed grid, kept for reference) and `arch` (`ARCH_GRID`, the default of
+`monai_preproc.sweep` / `scripts/monai_sweep.sh`): a grid search over **UNet vs
+UNet++** — `unet_*` = MONAI FlexibleUNet, `unetpp_*` = smp UnetPlusPlus — both
+with ImageNet-pretrained EfficientNet-B0/B1/B2/B4 encoders at 256/384/512/768
+input (16 backbone × size combos per arch, 32 configs total — image size is
+pushed to 768 even for the smallest backbone since latency barely depends on it).
+All entries use `pretrained=True` (matching the old pipeline's
+`encoder_weights="imagenet"`); checkpoints are always *loaded* with
 `pretrained=False` so no weights are downloaded at eval time. Each config is
-trained on all 5 folds and evaluated on the val folds (never trained on), with
-per-frame latency/params/FLOPs recorded.
+trained on the selected folds (`FOLDS="0 1"` in the shell script for a quick
+first pass, `FOLDS="0 1 2 3 4"` for the final full run; `--folds` in the CLI)
+and evaluated on the corresponding val folds (never trained on), with per-frame
+latency/params/FLOPs recorded. The loss is always the original plain Dice loss
+(a Dice+BCE variant was tried and did not help, so it was removed).
 
 Outputs in `--out_dir` (default `results/monai_sweep`):
 
@@ -103,18 +109,10 @@ Outputs in `--out_dir` (default `results/monai_sweep`):
   best-IoU 2×5 plots (`vis/`)
 - `eval/<config>/seg/` — per-fold eval detail (same CSV/plot format as `cropping/eval/`)
 
-### Shape-prior loss comparison
-
-The crop target is always an axis-aligned ellipse (the annotation CSV stores
-`center_x/center_y/radius_x/radius_y`), so `losses.py` adds `ellipse_shape_loss`
-— MSE between the soft ellipse parameters of the predicted probability map and
-those of the GT mask. Training uses `Dice + seg_shape_loss_weight *
-ellipse_shape_loss`; weight `0` is exactly the original loss. To compare old vs
-new loss in one sweep: `SHAPE_LOSS=100 sbatch scripts/monai_sweep.sh` — every
-config is additionally run as `<config>_shape100`, shown as separate rows in the
-CSVs and in orange in `overview.png`. To run *only* the shape-loss variants
-(not the plain configs), add `--only_shape_loss` (`ONLY_SHAPE=1` in the shell
-script).
+The sweep compares architectures only — the loss is fixed to the original plain
+Dice (an additional BCE term was tried and did not improve val IoU, so it was
+removed; no custom losses are used). In `overview.png`, UNet++ configs are orange
+and UNet configs blue.
 
 Extend or override a grid with a JSON file:
 `python -m monai_preproc.sweep --grid my_grid.json`, where the file is
@@ -130,5 +128,5 @@ python -m pytest tests/test_monai_preproc.py -q
 
 Covers val-transform parity with the albumentations chain, model forward + cost,
 checkpoint roundtrip, end-to-end seg train (TensorBoard events, early stopping,
-best-IoU plot) + eval on synthetic frames, the ellipse shape loss, and the sweep
-(CSV/pareto/overview outputs, shape-loss variants, `--plot_only`).
+best-IoU plot, TensorBoard events) + eval on synthetic frames, the UNet++ arch,
+and the sweep (CSV/pareto/overview outputs, `--plot_only`).
