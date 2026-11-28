@@ -132,7 +132,7 @@ def write_eval_outputs(out_dir, per_image, summary, metrics, plot_name, title):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", type=str, required=True)
-    parser.add_argument("--preset", choices=sorted(GRIDS), default="flexunet", help="Named grid to take --config from.")
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="arch", help="Named grid to take --config from.")
     parser.add_argument("--grid", type=str, default=None)
     parser.add_argument("--models_dir", type=str, required=True)
     parser.add_argument("--out_dir", type=str, required=True)

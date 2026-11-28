@@ -1,8 +1,11 @@
 """Segmentation model builder and checkpoint I/O for the MONAI pipeline.
 
-MONAI UNet (configurable channels/strides) or MONAI FlexibleUNet (ImageNet-
-pretrained EfficientNet encoder backbone -- the counterpart of cropping/'s
-smp.UnetPlusPlus(encoder_name="efficientnet-b4", encoder_weights="imagenet")).
+Architectures (all grid entries use ImageNet-pretrained encoders):
+  "flexunet": MONAI FlexibleUNet -- UNet-style decoder on a pretrained
+              EfficientNet encoder (timm-style backbone name).
+  "unetpp":   smp.UnetPlusPlus with the same pretrained EfficientNet encoder
+              (exactly cropping/'s model family).
+  "unet":     plain MONAI UNet, from scratch (kept for reference configs only).
 
 Checkpoints are saved as seg_fold_<i>.pth with a <name>.json config sidecar, so
 any loader can rebuild the exact architecture (same naming as cropping/models).
@@ -13,6 +16,7 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
+import segmentation_models_pytorch as smp
 from monai.networks.nets import UNet, FlexibleUNet
 
 from .configs import PreprocConfig
@@ -30,7 +34,11 @@ def build_seg_model(cfg: PreprocConfig, pretrained=None) -> nn.Module:
     if cfg.seg_arch == "flexunet":
         return FlexibleUNet(in_channels=3, out_channels=1, backbone=cfg.seg_backbone,
                             pretrained=pre, spatial_dims=2)
-    raise ValueError(f"unknown seg_arch '{cfg.seg_arch}' (choose 'unet' or 'flexunet')")
+    if cfg.seg_arch == "unetpp":
+        return smp.UnetPlusPlus(encoder_name=cfg.seg_backbone,
+                                encoder_weights="imagenet" if pre else None,
+                                in_channels=3, classes=1)
+    raise ValueError(f"unknown seg_arch '{cfg.seg_arch}' (choose 'unet', 'flexunet' or 'unetpp')")
 
 
 def save_checkpoint(model: nn.Module, cfg: PreprocConfig, path):

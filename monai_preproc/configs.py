@@ -2,11 +2,10 @@
 
 A PreprocConfig fully determines the segmentation stage (the informative-frame
 classifier is a separate pipeline and is re-added later):
-  arch: "unet" (MONAI UNet, configurable channels/strides) or "flexunet"
-        (MONAI FlexibleUNet with an ImageNet-pretrained EfficientNet encoder --
-        the MONAI counterpart of cropping/'s smp.UnetPlusPlus(EfficientNet-B4))
-  seg_loss: "dice" (default, same as cropping/train_segmentation.py) or
-        "dice_ce" (Dice + plain BCE -- the stock MONAI DiceCELoss combination)
+  arch: "unet" (MONAI UNet, from scratch, configurable channels/strides),
+        "flexunet" (MONAI FlexibleUNet: UNet-style decoder on an ImageNet-
+        pretrained EfficientNet encoder) or "unetpp" (smp.UnetPlusPlus with an
+        ImageNet-pretrained EfficientNet encoder, like cropping/)
 
 Training hyperparameters mirror cropping/train_segmentation.py (the original
 UNet++ pipeline): Adam(lr=1e-4), batch_size=4, epochs=40, Dice loss from logits,
@@ -14,8 +13,11 @@ best-val-micro-IoU checkpoint seg_fold_<fold>.pth; early stopping (patience=3,
 0 disables) and TensorBoard logging are added on top in train.py.
 
 DEFAULT_GRID is the original mixed grid (UNet vs FlexibleUNet comparison).
-FLEXUNET_GRID is the FlexibleUNet-only architecture search used by
-monai_preproc.sweep by default (--preset flexunet). load_grid selects a named
+ARCH_GRID is the sweep's default preset ("arch"): a grid search over UNet
+("flexunet") vs UNet++ ("unetpp"), both with ImageNet-pretrained EfficientNet
+encoders, across backbone x input-size combinations. All entries use
+pretrained=True -- training from scratch does not make sense for this task.
+load_grid selects a named
 grid (GRIDS[preset]) and optionally extends/overrides it from a JSON file
 ({name: {field: value, ...}}).
 """
@@ -34,7 +36,6 @@ class PreprocConfig:
     seg_channels: tuple = (32, 64, 128, 256, 512)
     seg_strides: tuple = (2, 2, 2, 2)
     seg_img_size: int = 768
-    seg_loss: str = "dice"
     batch_size: int = 4
     lr: float = 1e-4
     epochs: int = 40
@@ -85,40 +86,19 @@ DEFAULT_GRID = {
     ),
 }
 
-FLEXUNET_GRID = {
-    "flexunet_b0_256": PreprocConfig(
-        name="flexunet_b0_256",
-        seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=256,
-        batch_size=16, pretrained=True,
-    ),
-    "flexunet_b0_384": PreprocConfig(
-        name="flexunet_b0_384",
-        seg_arch="flexunet", seg_backbone="efficientnet-b0", seg_img_size=384,
-        batch_size=8, pretrained=True,
-    ),
-    "flexunet_b1_384": PreprocConfig(
-        name="flexunet_b1_384",
-        seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=384,
-        batch_size=8, pretrained=True,
-    ),
-    "flexunet_b1_512": PreprocConfig(
-        name="flexunet_b1_512",
-        seg_arch="flexunet", seg_backbone="efficientnet-b1", seg_img_size=512,
-        pretrained=True,
-    ),
-    "flexunet_b2_512": PreprocConfig(
-        name="flexunet_b2_512",
-        seg_arch="flexunet", seg_backbone="efficientnet-b2", seg_img_size=512,
-        pretrained=True,
-    ),
-    "flexunet_b4_768": PreprocConfig(
-        name="flexunet_b4_768",
-        seg_arch="flexunet", seg_backbone="efficientnet-b4", seg_img_size=768,
-        pretrained=True,
-    ),
-}
+ARCH_GRID = {}
+for _arch, _tag in (("flexunet", "unet"), ("unetpp", "unetpp")):
+    for _bb, _sizes in (("efficientnet-b0", (256, 384)),
+                        ("efficientnet-b1", (384, 512)),
+                        ("efficientnet-b2", (512,)),
+                        ("efficientnet-b4", (768,))):
+        for _s in _sizes:
+            _name = f"{_tag}_{_bb.replace('efficientnet-', '')}_{_s}"
+            _bs = 16 if _s <= 256 else (8 if _s <= 384 else 4)
+            ARCH_GRID[_name] = PreprocConfig(name=_name, seg_arch=_arch, seg_backbone=_bb,
+                                             seg_img_size=_s, batch_size=_bs, pretrained=True)
 
-GRIDS = {"default": DEFAULT_GRID, "flexunet": FLEXUNET_GRID}
+GRIDS = {"default": DEFAULT_GRID, "arch": ARCH_GRID}
 
 
 def load_grid(path=None, preset="default"):

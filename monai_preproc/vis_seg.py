@@ -139,7 +139,7 @@ def vis_seg_fold(cfg, fold, models_dir, ann_csv, splits_csv, img_dir, out_dir, n
             ax.set_title(title, fontsize=9)
             ax.axis("off")
     fig.suptitle(f"{cfg.name} | fold {fold} val | checkpoint {ckpt.name} | "
-                 f"seg_loss={cfg.seg_loss}")
+                 f"arch={cfg.seg_arch}/{cfg.seg_backbone}, pretrained={cfg.pretrained}")
     fig.tight_layout(rect=[0, 0, 1, 0.97])
     png_path = out_dir / f"{cfg.name}_fold{fold}_val.png"
     fig.savefig(png_path, dpi=150)
@@ -158,8 +158,8 @@ def vis_seg_fold(cfg, fold, models_dir, ann_csv, splits_csv, img_dir, out_dir, n
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--config", type=str, required=True, help="Grid config name, e.g. flexunet_b0_256_dicece.")
-    parser.add_argument("--preset", choices=sorted(GRIDS), default="flexunet")
+    parser.add_argument("--config", type=str, required=True, help="Grid config name, e.g. unetpp_b1_512.")
+    parser.add_argument("--preset", choices=sorted(GRIDS), default="arch")
     parser.add_argument("--grid", type=str, default=None, help="JSON file overriding/extending the preset grid.")
     parser.add_argument("--models_root", type=str, default="results/monai_sweep/models",
                         help="Sweep models root; fold checkpoints are read from <models_root>/<config>/seg.")

@@ -10,10 +10,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 import pandas as pd
-import pytest
 import torch
 
-from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, FLEXUNET_GRID, load_grid
+from monai_preproc.configs import PreprocConfig, DEFAULT_GRID, ARCH_GRID, load_grid
 from monai_preproc.transforms import seg_val_transforms
 from monai_preproc.models import build_seg_model, save_checkpoint, load_seg_model, measure_cost
 from monai_preproc.train import train_seg
@@ -42,10 +41,10 @@ def test_grid_loads(tmp_path):
     grid2 = load_grid(str(override))
     assert grid2["custom"].seg_img_size == 256
     assert "unet_tiny_256" in grid2
-    flex = load_grid(None, preset="flexunet")
-    assert set(flex) == set(FLEXUNET_GRID)
-    assert all(c.seg_arch == "flexunet" for c in flex.values())
-    assert all(c.pretrained for c in flex.values())
+    arch = load_grid(None, preset="arch")
+    assert set(arch) == set(ARCH_GRID)
+    assert {c.seg_arch for c in arch.values()} == {"flexunet", "unetpp"}
+    assert all(c.pretrained for c in arch.values())  # everything ImageNet-pretrained
 
 
 def test_grid_unet_strides_match_channels():
@@ -78,6 +77,12 @@ def test_models_forward_and_cost():
         assert seg(x).shape == (2, 1, 64, 64)
     cost = measure_cost(seg, 64, torch.device("cpu"))
     assert cost["params"] > 0 and cost["latency_ms"] > 0 and cost["img_size"] == 64
+    # UNet++ arch (smp.UnetPlusPlus, pretrained=False for the test -> random weights)
+    cfg_pp = PreprocConfig(name="tiny_pp", seg_arch="unetpp", seg_backbone="efficientnet-b0",
+                           seg_img_size=64, batch_size=2, epochs=1, pretrained=False)
+    seg_pp = build_seg_model(cfg_pp, pretrained=False)
+    with torch.no_grad():
+        assert seg_pp(x).shape == (2, 1, 64, 64)
 
 
 def test_checkpoint_roundtrip_with_sidecar(tmp_path):
@@ -194,17 +199,6 @@ def test_pareto_per_stage_keeps_full_frame_rows():
     assert set(zip(pareto["config"], pareto["stage"])) == {("a", "seg"), ("b", "seg"), ("b", "cls")}
 
 
-def test_train_seg_logs_loss_components_separately(tmp_path):
-    cfg = tiny_cfg()
-    cfg.seg_loss = "dice_ce"
-    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    res = train_seg(cfg, 0, str(ann_csv), str(splits_csv), str(img_dir), str(tmp_path / "m"),
-                    epochs=1, batch_size=2, num_workers=0, device=torch.device("cpu"), log=lambda *a: None)
-    assert {"train_loss", "train_loss_dice", "train_loss_bce", "val_iou"} <= set(res["history"][0])
-    assert res["history"][0]["train_loss"] == pytest.approx(
-        res["history"][0]["train_loss_dice"] + res["history"][0]["train_loss_bce"])
-
-
 def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     from monai_preproc.sweep import run_sweep
     ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
@@ -220,25 +214,7 @@ def test_sweep_writes_csv_pareto_and_overview_plot(tmp_path):
     assert (out_dir / "models" / "tiny" / "seg" / "seg_fold_0.pth").exists()
 
 
-def test_sweep_loss_variant_adds_dicece_jobs(tmp_path):
-    from monai_preproc.sweep import run_sweep
-    ann_csv, splits_csv, img_dir = make_seg_fixture(tmp_path)
-    grid = {"tiny": tiny_cfg()}  # single-entry grid: load_grid(json) would extend the whole preset
-    out_dir = tmp_path / "sweep"
-    df = run_sweep(grid, str(out_dir), folds=[0], epochs=1, train=True,
-                   ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                   num_workers=0, device=torch.device("cpu"), loss_variants=("dice_ce",),
-                   log=lambda *a: None)
-    assert set(df["config"]) == {"tiny", "tiny_dicece"}
-    assert set(df["stage"]) == {"seg"}
-    assert (out_dir / "models" / "tiny_dicece" / "seg" / "seg_fold_0.pth").exists()
-    assert (out_dir / "overview.png").exists()
-    df2 = run_sweep(grid, str(tmp_path / "sweep2"), folds=[0], epochs=1, train=True,
-                    ann_csv=str(ann_csv), splits_csv=str(splits_csv), img_dir=str(img_dir),
-                    num_workers=0, device=torch.device("cpu"), loss_variants=("dice_ce",),
-                    variants_only=True, log=lambda *a: None)
-    assert set(df2["config"]) == {"tiny_dicece"}
-    assert not (tmp_path / "sweep2" / "models" / "tiny").exists()
+
 
 
 def test_sweep_plot_only_rerenders_outputs(tmp_path):
