@@ -88,14 +88,10 @@ DEFAULT_GRID = {
 
 ARCH_GRID = {}
 for _arch, _tag in (("flexunet", "unet"), ("unetpp", "unetpp")):
-    for _bb, _sizes in (("efficientnet-b0", (128, 192, 256, 320, 384)),
-                        ("efficientnet-b1", (256, 320, 384, 512)),
-                        ("efficientnet-b2", (384, 512)),
-                        ("efficientnet-b3", (512,)),
-                        ("efficientnet-b4", (768,))):
-        for _s in _sizes:
+    for _bb in ("efficientnet-b0", "efficientnet-b1", "efficientnet-b2", "efficientnet-b4"):
+        for _s in (256, 384, 512, 768):
             _name = f"{_tag}_{_bb.replace('efficientnet-', '')}_{_s}"
-            _bs = 32 if _s <= 192 else (16 if _s <= 320 else (8 if _s <= 448 else 4))
+            _bs = 16 if _s == 256 else (8 if _s <= 512 else 4)
             ARCH_GRID[_name] = PreprocConfig(name=_name, seg_arch=_arch, seg_backbone=_bb,
                                              seg_img_size=_s, batch_size=_bs, pretrained=True)
 

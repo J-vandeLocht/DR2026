@@ -85,10 +85,10 @@ Two named grids live in `configs.py` (`GRIDS`): `default` (`DEFAULT_GRID`, the
 original mixed grid, kept for reference) and `arch` (`ARCH_GRID`, the default of
 `monai_preproc.sweep` / `scripts/monai_sweep.sh`): a grid search over **UNet vs
 UNet++** — `unet_*` = MONAI FlexibleUNet, `unetpp_*` = smp UnetPlusPlus — both
-with ImageNet-pretrained EfficientNet-B0…B4 encoders at 128–768 input (13
-backbone × size combos per arch, denser at the small end: b0 @ 128–384,
-b1 @ 256–512, b2 @ 384–512, b3 @ 512, b4 @ 768). All
-entries use `pretrained=True` (matching the old pipeline's
+with ImageNet-pretrained EfficientNet-B0/B1/B2/B4 encoders at 256/384/512/768
+input (16 backbone × size combos per arch, 32 configs total — image size is
+pushed to 768 even for the smallest backbone since latency barely depends on it).
+All entries use `pretrained=True` (matching the old pipeline's
 `encoder_weights="imagenet"`); checkpoints are always *loaded* with
 `pretrained=False` so no weights are downloaded at eval time. Each config is
 trained on the selected folds (`FOLDS="0 1"` in the shell script for a quick
